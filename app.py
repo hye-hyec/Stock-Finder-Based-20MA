@@ -124,16 +124,16 @@ h2, h4 {
 st.title("📈 NASDAQ Scanner Pro")
 
 TICKERS = [
-    "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST",
-    "NFLX","AMD","ADBE","PEP","CSCO","TMUS","QCOM","AMGN","INTU","AMAT",
-    "BKNG","ISRG","VRTX","GILD","LRCX","MU","PANW","KLAC","MELI","SNPS",
-    "CDNS","ADI","MAR","FTNT","CRWD","ORLY","CSX","PYPL","MNST","AEP",
-    "ROP","ODFL","DXCM","KDP","CTAS","NXPI","PCAR","MRVL","FAST","PAYX",
-    "TEAM","DDOG","ZS","MDB","NET","SHOP","SQ","ROKU","DOCU","SNOW",
-    "PLTR","ARM","SMCI","ANSS","WDAY","BIIB","REGN","EXC","EA","XEL",
-    "IDXX","FANG","CPRT","CHTR","GEHC","ON","TTWO","CSGP","BKR","WBD",
-    "VRSK","MCHP","MRNA","ALGN","LULU","KHC","CTSH","DLTR","SBUX","ADSK",
-    "MNDT","TTD","RIVN","OKTA","HUBS","PDD","BIDU","JD","NTES"
+    "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "COST",
+    "NFLX", "AMD", "ADBE", "PEP", "CSCO", "TMUS", "QCOM", "AMGN", "INTU", "AMAT",
+    "BKNG", "ISRG", "VRTX", "GILD", "LRCX", "MU", "PANW", "KLAC", "MELI", "SNPS",
+    "CDNS", "ADI", "MAR", "FTNT", "CRWD", "ORLY", "CSX", "PYPL", "MNST", "AEP",
+    "ROP", "ODFL", "DXCM", "KDP", "CTAS", "NXPI", "PCAR", "MRVL", "FAST", "PAYX",
+    "TEAM", "DDOG", "ZS", "MDB", "NET", "SHOP", "SQ", "ROKU", "DOCU", "SNOW",
+    "PLTR", "ARM", "SMCI", "ANSS", "WDAY", "BIIB", "REGN", "EXC", "EA", "XEL",
+    "IDXX", "FANG", "CPRT", "CHTR", "GEHC", "ON", "TTWO", "CSGP", "BKR", "WBD",
+    "VRSK", "MCHP", "MRNA", "ALGN", "LULU", "KHC", "CTSH", "DLTR", "SBUX", "ADSK",
+    "TTD", "RIVN", "OKTA", "HUBS", "PDD", "BIDU", "JD", "NTES", "CEG", "GFS"
 ]
 
 if "results_df" not in st.session_state:
