@@ -1,3 +1,0 @@
-import streamlit as st
-
-st.title("나스닥100 추천기")

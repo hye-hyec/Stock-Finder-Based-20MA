@@ -1,5 +1,12 @@
+<<<<<<< HEAD
 Plaintext
 streamlit
 yfinance
 pandas
 plotly
+=======
+streamlit
+yfinance
+pandas
+plotly
+>>>>>>> 14726906e6b63121590c3fa227ccff0583363fbb
