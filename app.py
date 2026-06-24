@@ -163,17 +163,55 @@ def load_all_market_data(tickers):
     data = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True, group_by="ticker", progress=False)
     return data
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=300)
 def get_next_earnings_date(ticker):
     try:
         t = yf.Ticker(ticker)
-        calendar = t.calendar
-        if calendar is not None and 'Earnings Date' in calendar:
-            dates = calendar['Earnings Date']
-            if dates and len(dates) > 0:
-                return dates[0].strftime('%Y-%m-%d')
+
+        # 1순위 calendar
+        try:
+            cal = t.calendar
+            if cal is not None:
+                if hasattr(cal, "values"):
+                    for v in cal.values.flatten():
+                        if hasattr(v, "strftime"):
+                            return v.strftime("%Y-%m-%d")
+            if isinstance(cal, dict):
+                for v in cal.values():
+                    if hasattr(v, "strftime"):
+                        return v.strftime("%Y-%m-%d")
+            if isinstance(cal, pd.DataFrame) and not cal.empty:
+                for v in cal.to_numpy().flatten():
+                    if hasattr(v, "strftime"):
+                        return v.strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+        # 2순위 earnings_dates
+        try:
+            ed = t.earnings_dates
+            if ed is not None and len(ed) > 0:
+                idx = list(ed.index)
+                future = [d for d in idx if pd.Timestamp(d) >= pd.Timestamp.now() - pd.Timedelta(days=1)]
+                if future:
+                    return min(future).strftime("%Y-%m-%d")
+        except Exception:
+            pass
+
+        # 3순위 info
+        try:
+            info = t.info
+            for key in ["earningsTimestamp","earningsTimestampStart","nextEarningsDate"]:
+                val = info.get(key)
+                if val:
+                    if isinstance(val,(int,float)):
+                        return datetime.fromtimestamp(val).strftime('%Y-%m-%d')
+        except Exception:
+            pass
+
     except Exception:
         pass
+    return "N/A"
     return "N/A"
 
 @st.cache_data(ttl=86400)
@@ -300,14 +338,13 @@ with left_col:
                     is_match = False
 
                 if is_match:
-                    earnings_date = get_next_earnings_date(ticker)
                     results.append({
                         "종목": ticker,
                         "현재가": round(price, 2),
                         "20일선": round(ma20, 2),
                         "괴리율(%)": round(distance, 2),
                         "RSI": round(rsi, 2),
-                        "실적발표일": earnings_date
+                        "실적발표일": "조회중..."
                     })
             except Exception:
                 pass
@@ -363,14 +400,14 @@ with right_col:
         c3.metric("괴리율", f"{row['괴리율(%)']}%")
         c4.metric("RSI", row["RSI"])
         
-        ed_str = row['실적발표일']
+        ed_str = get_next_earnings_date(selected_ticker)
         bg_color = "#161b22"
         border_color = "#1f6feb"
         text_color = "#58a6ff"
         
         if ed_str != "N/A":
             try:
-                today = datetime(2026, 6, 20)
+                today = datetime.now()
                 ed_date = datetime.strptime(ed_str, "%Y-%m-%d")
                 days_left = (ed_date - today).days
                 
