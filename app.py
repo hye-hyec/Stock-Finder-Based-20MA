@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
-from datetime import datetime
+from datetime import datetime, timedelta
 
 st.set_page_config(page_title="NASDAQ Scanner Pro", page_icon="📈", layout="wide")
 
@@ -151,9 +151,16 @@ def calculate_rsi(close, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
+# 1. 데이터를 가져올 때 '어제'까지의 데이터만 가져오도록 수정
 @st.cache_data(ttl=3600)
 def load_all_market_data(tickers):
-    data = yf.download(tickers, period="1y", auto_adjust=True, group_by="ticker", progress=False)
+    # 전일 종가까지만 데이터를 가져오도록 날짜 설정
+    yesterday = datetime.now() - timedelta(days=1)
+    end_date = yesterday.strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
+    
+    # 데이터 로드
+    data = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True, group_by="ticker", progress=False)
     return data
 
 @st.cache_data(ttl=3600)
