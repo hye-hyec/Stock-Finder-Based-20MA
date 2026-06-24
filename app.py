@@ -124,7 +124,6 @@ h2, h4 {
 st.title("📈 NASDAQ Scanner Pro")
 
 TICKERS = [
-<<<<<<< HEAD
     "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "COST",
     "NFLX", "AMD", "ADBE", "PEP", "CSCO", "TMUS", "QCOM", "AMGN", "INTU", "AMAT",
     "BKNG", "ISRG", "VRTX", "GILD", "LRCX", "MU", "PANW", "KLAC", "MELI", "SNPS",
@@ -135,7 +134,6 @@ TICKERS = [
     "IDXX", "FANG", "CPRT", "CHTR", "GEHC", "ON", "TTWO", "CSGP", "BKR", "WBD",
     "VRSK", "MCHP", "MRNA", "ALGN", "LULU", "KHC", "CTSH", "DLTR", "SBUX", "ADSK",
     "TTD", "RIVN", "OKTA", "HUBS", "PDD", "BIDU", "JD", "NTES", "CEG", "GFS"
-=======
     "AAPL","MSFT","NVDA","AMZN","META","GOOGL","GOOG","TSLA","AVGO","COST",
     "NFLX","AMD","ADBE","PEP","CSCO","TMUS","QCOM","AMGN","INTU","AMAT",
     "BKNG","ISRG","VRTX","GILD","LRCX","MU","PANW","KLAC","MELI","SNPS",
@@ -146,7 +144,6 @@ TICKERS = [
     "IDXX","FANG","CPRT","CHTR","GEHC","ON","TTWO","CSGP","BKR","WBD",
     "VRSK","MCHP","MRNA","ALGN","LULU","KHC","CTSH","DLTR","SBUX","ADSK",
     "MNDT","TTD","RIVN","OKTA","HUBS","PDD","BIDU","JD","NTES"
->>>>>>> 14726906e6b63121590c3fa227ccff0583363fbb
 ]
 
 if "results_df" not in st.session_state:
