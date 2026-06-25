@@ -179,16 +179,11 @@ def calculate_rsi(close, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-# 1. 데이터를 가져올 때 '어제'까지의 데이터만 가져오도록 수정
 @st.cache_data(ttl=3600)
 def load_all_market_data(tickers):
-    # 전일 종가까지만 데이터를 가져오도록 날짜 설정
-    yesterday = datetime.now() - timedelta(days=1)
-    end_date = yesterday.strftime('%Y-%m-%d')
+    # end 파라미터를 아예 없애야 가장 최근 거래일(어제 장 마감분)까지 들어옵니다.
     start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-    
-    # 데이터 로드
-    data = yf.download(tickers, start=start_date, end=end_date, auto_adjust=True, group_by="ticker", progress=False)
+    data = yf.download(tickers, start=start_date, auto_adjust=True, group_by="ticker", progress=False)
     return data
 
 @st.cache_data(ttl=300)
@@ -325,11 +320,11 @@ with left_col:
                 ma200_series = close_series.rolling(200).mean()
                 rsi_series = calculate_rsi(close_series)
 
-                price = float(close_series.iloc[-1])
-                ma20 = float(ma20_series.iloc[-1])
-                ma100 = float(ma100_series.iloc[-1])
-                ma200 = float(ma200_series.iloc[-1])
-                rsi = float(rsi_series.iloc[-1])
+                price = float(close_series.iloc[-2])
+                ma20 = float(ma20_series.iloc[-2])
+                ma100 = float(ma100_series.iloc[-2])
+                ma200 = float(ma200_series.iloc[-2])
+                rsi = float(rsi_series.iloc[-2])
 
                 if pd.isna(ma20) or pd.isna(rsi):
                     continue
@@ -350,8 +345,8 @@ with left_col:
                 
                 if volume_filter_active and is_match:
                     value_series = close_series * volume_series
-                    avg_value_3d = value_series.iloc[-3:].mean()
-                    avg_value_20d = value_series.iloc[-20:].mean()
+                    avg_value_3d = value_series.iloc[-4:-1].mean()
+                    avg_value_20d = value_series.iloc[-21:-1].mean()
                     
                     if avg_value_20d > 0:
                         ratio = (avg_value_3d / avg_value_20d) * 100
