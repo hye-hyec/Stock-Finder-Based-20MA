@@ -123,7 +123,7 @@ h2, h4 {
 
 st.title("📈 NASDAQ Scanner Pro")
 
-TICKERS = [
+NASDAQ100_TICKERS = [
     "AAPL", "MSFT", "NVDA", "AMZN", "META", "GOOGL", "GOOG", "TSLA", "AVGO", "COST",
     "NFLX", "AMD", "ADBE", "PEP", "CSCO", "TMUS", "QCOM", "AMGN", "INTU", "AMAT",
     "BKNG", "ISRG", "VRTX", "GILD", "LRCX", "MU", "PANW", "KLAC", "MELI", "SNPS",
@@ -135,6 +135,34 @@ TICKERS = [
     "VRSK", "MCHP", "MRNA", "ALGN", "LULU", "KHC", "CTSH", "DLTR", "SBUX", "ADSK",
     "TTD", "RIVN", "OKTA", "HUBS", "PDD", "BIDU", "JD", "NTES", "CEG", "GFS"
 ]
+
+NEW_TICKERS = [
+    # 금융 (Financials)
+    "JPM", "BRK.B", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "SCHW", 
+    "PNC", "USB", "TFC", "COF", "DFS", "MET", "PRU", "AFL", "ALL", "CB",
+    
+    # 헬스케어 (Healthcare)
+    "JNJ", "UNH", "LLY", "PFE", "MRK", "ABBV", "ABT", "DHR", "BMY", "CVS", 
+    "CI", "HCA", "SYK", "BDX", "MDT", "ELV", "GILD", "HUM", "CNC", "ZTS",
+    
+    # 에너지 및 원자재 (Energy & Materials)
+    "XOM", "CVX", "COP", "SLB", "EOG", "PXD", "MPC", "PSX", "VLO", "WMB",
+    "LIN", "APD", "ECL", "DD", "FCX", "NEM", "SHW", "IFF", "CTVA", "PPG",
+    
+    # 필수소비재 (Consumer Staples)
+    "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "CL", "KMB", "GIS",
+    "ADM", "MDLZ", "STZ", "HSY", "KR", "SYY", "WBA", "EL", "CAG", "TSN",
+    
+    # 산업재 (Industrials)
+    "UPS", "FDX", "CAT", "DE", "GE", "HON", "BA", "MMM", "LMT", "RTX",
+    "GD", "NOC", "GEHC", "ITW", "EMR", "CMI", "CSX", "UNP", "NSC", "JCI",
+    
+    # 경기소비재 및 유틸리티 (Consumer Discretionary & Utilities)
+    "DIS", "NKE", "HD", "LOW", "MCD", "TGT", "TJX", "GM", "F", "BKNG",
+    "MAR", "HLT", "EXC", "NEE", "DUK", "SO", "D", "AEP", "SRE", "PEG"
+]
+
+TICKERS = list(set(NASDAQ100_TICKERS + NEW_TICKERS))
 
 if "results_df" not in st.session_state:
     st.session_state.results_df = None
