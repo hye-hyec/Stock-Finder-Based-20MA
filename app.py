@@ -320,11 +320,18 @@ with left_col:
                 ma200_series = close_series.rolling(200).mean()
                 rsi_series = calculate_rsi(close_series)
 
-                price = float(close_series.iloc[-2])
-                ma20 = float(ma20_series.iloc[-2])
-                ma100 = float(ma100_series.iloc[-2])
-                ma200 = float(ma200_series.iloc[-2])
-                rsi = float(rsi_series.iloc[-2])
+                today = pd.Timestamp.now().normalize()
+                last_date = data.index[-1].normalize()
+                is_market_closed = last_date < today
+
+                # 2. 판단 결과를 바탕으로 idx 설정
+                idx = -1 if is_market_closed else -2
+
+                price = float(close_series.iloc[idx])
+                ma20 = float(ma20_series.iloc[idx])
+                ma100 = float(ma100_series.iloc[idx])
+                ma200 = float(ma200_series.iloc[idx])
+                rsi = float(rsi_series.iloc[idx])
 
                 if pd.isna(ma20) or pd.isna(rsi):
                     continue
@@ -344,9 +351,18 @@ with left_col:
                         is_match = False
                 
                 if volume_filter_active and is_match:
+
                     value_series = close_series * volume_series
-                    avg_value_3d = value_series.iloc[-4:-1].mean()
-                    avg_value_20d = value_series.iloc[-21:-1].mean()
+                    
+                    # [수정] 마감 여부에 따라 슬라이싱 구간 동적 설정
+                    if is_market_closed:
+                        # 장이 끝남: 어제, 그제, 그그제(마지막 3일)
+                        avg_value_3d = value_series.iloc[-3:].mean()
+                        avg_value_20d = value_series.iloc[-20:].mean()
+                    else:
+                        # 장중: 오늘 제외, 어제부터 3일
+                        avg_value_3d = value_series.iloc[-4:-1].mean()
+                        avg_value_20d = value_series.iloc[-21:-1].mean()
                     
                     if avg_value_20d > 0:
                         ratio = (avg_value_3d / avg_value_20d) * 100
