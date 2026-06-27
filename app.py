@@ -3,40 +3,7 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 import pytz
-import io
-import urllib.request
 from datetime import datetime, timedelta
-
-
-@st.cache_data(ttl=600)
-def fetch_stooq_recent(ticker, days=15):
-    """
-    Stooq에서 최근 일봉을 받아온다(보조 소스).
-    yfinance가 클라우드 환경에서 최근 종가를 NaN으로 주는 경우를 보완.
-    반환: Date 인덱스 + ['Open','High','Low','Close','Volume'] DataFrame, 실패 시 None
-    """
-    try:
-        sym = ticker.lower().replace('.', '-') + '.us'
-        end = datetime.now()
-        start = end - timedelta(days=days + 5)
-        url = (
-            f"https://stooq.com/q/d/l/?s={sym}"
-            f"&d1={start.strftime('%Y%m%d')}&d2={end.strftime('%Y%m%d')}&i=d"
-        )
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            text = resp.read().decode('utf-8', errors='ignore')
-        if not text or 'Date' not in text:
-            return None
-        df = pd.read_csv(io.StringIO(text))
-        if 'Close' not in df.columns or df.empty:
-            return None
-        df['Date'] = pd.to_datetime(df['Date'])
-        df = df.set_index('Date').sort_index()
-        keep = [c for c in ['Open', 'High', 'Low', 'Close', 'Volume'] if c in df.columns]
-        return df[keep]
-    except Exception:
-        return None
 
 st.set_page_config(page_title="NASDAQ Scanner Pro", page_icon="📈", layout="wide")
 
@@ -301,55 +268,13 @@ with left_col:
         market_close = now_us.replace(hour=16, minute=0,  second=0, microsecond=0)
         weekday = now_us.weekday()
         is_market_open_now = (weekday < 5) and (market_open <= now_us < market_close)
-        idx = -2 if is_market_open_now else -1
 
         # ── 기준일 규칙 ──
         # "이미 장 마감이 끝난 가장 최근 거래일"의 종가로 계산한다.
-        #   · 평일 16:00 ET 이후  → 오늘 종가 사용 가능
-        #   · 평일 장중/장전, 주말 → 직전 거래일 종가
-        # 아래에서 raw의 실제 날짜를 보고 "쓸 수 있는 마지막 확정일"을 고른다.
+        #   · 평일 16:00 ET 이후       → 오늘 종가 사용 가능
+        #   · 평일 장중/장전, 주말/공휴일 → 직전 거래일 종가
         today_us = pd.Timestamp(now_us.strftime('%Y-%m-%d'))
         after_close = (weekday < 5) and (now_us >= market_close)
-
-        # ===== 🔬 yfinance 수신 방식 진단 (AAPL 마지막 종가가 어느 방식에서 채워지나) =====
-        with st.expander("🔬 진단: yfinance 수신 방식 비교", expanded=True):
-            import io as _io
-            def _last_close(d):
-                try:
-                    if isinstance(d.columns, pd.MultiIndex):
-                        d = d.copy(); d.columns = d.columns.get_level_values(0)
-                    c = pd.to_numeric(d["Close"], errors="coerce").dropna()
-                    return f"{c.index[-1].strftime('%Y-%m-%d')} = {c.iloc[-1]:.2f}"
-                except Exception as e:
-                    return f"오류 {e}"
-
-            # 방식 A: download + start (현재 방식)
-            try:
-                a = yf.download("AAPL", start=(datetime.now()-timedelta(days=10)).strftime('%Y-%m-%d'),
-                                auto_adjust=True, progress=False)
-                st.write(f"**A) download(start=...):** {_last_close(a)}")
-            except Exception as e:
-                st.write(f"A) 오류: {e}")
-            # 방식 B: download + period
-            try:
-                b = yf.download("AAPL", period="10d", auto_adjust=True, progress=False)
-                st.write(f"**B) download(period='10d'):** {_last_close(b)}")
-            except Exception as e:
-                st.write(f"B) 오류: {e}")
-            # 방식 C: Ticker.history + period
-            try:
-                c = yf.Ticker("AAPL").history(period="10d", auto_adjust=True)
-                st.write(f"**C) Ticker.history(period='10d'):** {_last_close(c)}")
-            except Exception as e:
-                st.write(f"C) 오류: {e}")
-            # 방식 D: Ticker.history + start
-            try:
-                dd = yf.Ticker("AAPL").history(start=(datetime.now()-timedelta(days=10)).strftime('%Y-%m-%d'), auto_adjust=True)
-                st.write(f"**D) Ticker.history(start=...):** {_last_close(dd)}")
-            except Exception as e:
-                st.write(f"D) 오류: {e}")
-            st.caption(f"now_us = {now_us.strftime('%Y-%m-%d %H:%M %Z')}  ·  목표: 금요일 종가가 보이는 방식 찾기")
-        # ===== 진단 끝 =====
 
         with st.spinner("데이터 수집 중..."):
             raw = yf.download(
@@ -372,7 +297,6 @@ with left_col:
             elif names[-1] == 'Ticker':
                 ticker_level = 1
             else:
-                # 이름이 없으면 값으로 판별: OHLCV가 들어있는 레벨이 price level
                 ohlcv = {"Open", "High", "Low", "Close", "Volume", "Adj Close"}
                 lv0 = set(raw.columns.get_level_values(0))
                 ticker_level = 1 if (lv0 & ohlcv) else 0
@@ -383,77 +307,19 @@ with left_col:
                     for col in ["Open", "High", "Low", "Close", "Volume"]:
                         if col in df_t.columns:
                             df_t[col] = pd.to_numeric(df_t[col], errors="coerce")
+                    # 종가가 비어있는 미확정/누락 행 제거
+                    df_t = df_t[df_t["Close"].notna()].copy()
                     ticker_dfs[ticker] = df_t
         else:
             df_t = raw.copy()
             for col in ["Open", "High", "Low", "Close", "Volume"]:
                 if col in df_t.columns:
                     df_t[col] = pd.to_numeric(df_t[col], errors="coerce")
+            df_t = df_t[df_t["Close"].notna()].copy()
             if TICKERS:
                 ticker_dfs[TICKERS[0]] = df_t
 
-        # ── Stooq 보조: 최근 확정 거래일 종가가 비어 있으면 메꾼다 ──
-        # 평일 장 마감 후가 아니면 '오늘' 행은 아직 미확정이므로 보충 대상에서 제외.
-        def needs_fill(df):
-            """가장 최근(오늘 제외) 거래일 종가가 NaN이면 True"""
-            if df is None or df.empty:
-                return False
-            sub = df[df.index < today_us] if not after_close else df
-            sub = sub.dropna(subset=["Close"]) if "Close" in sub.columns else sub
-            # 원본에서 '최근 거래일' 종가가 비었는지: 오늘 제외한 마지막 인덱스 확인
-            ref = df[df.index < today_us] if not after_close else df
-            if ref.empty:
-                return False
-            last_close = ref["Close"].iloc[-1] if "Close" in ref.columns else None
-            return pd.isna(last_close)
-
-        fill_count = 0
-        # 보충이 필요한 종목만 추림
-        need_list = [t for t in TICKERS if needs_fill(ticker_dfs.get(t))]
-
-        # ── Stooq 연결 사전 테스트 (AAPL 1개로 빠르게 확인) ──
-        stooq_works = False
-        if need_list:
-            test = fetch_stooq_recent("AAPL")
-            stooq_works = (test is not None) and (not test.empty)
-            if stooq_works:
-                st.info(f"✅ 보조 소스(Stooq) 연결됨 · 보완 대상 {len(need_list)}개 종목")
-            else:
-                st.warning("⚠️ 보조 소스(Stooq)에 연결할 수 없습니다. "
-                           "yfinance 데이터로만 진행하며, 기준일이 하루 이전일 수 있습니다.")
-
-        stooq_disabled = not stooq_works
-        if need_list and stooq_works:
-            prog = st.progress(0.0, text=f"최신 종가 보완 중... (0/{len(need_list)})")
-            for i, ticker in enumerate(need_list):
-                df_t = ticker_dfs.get(ticker)
-                if df_t is None:
-                    continue
-                stooq = fetch_stooq_recent(ticker)
-                if stooq is not None and not stooq.empty:
-                    for d, row in stooq.iterrows():
-                        if d in df_t.index:
-                            if pd.isna(df_t.at[d, "Close"]):
-                                for c in ["Open", "High", "Low", "Close", "Volume"]:
-                                    if c in stooq.columns:
-                                        df_t.at[d, c] = row[c]
-                        else:
-                            for c in ["Open", "High", "Low", "Close", "Volume"]:
-                                if c in stooq.columns:
-                                    df_t.at[d, c] = row[c]
-                    df_t = df_t.sort_index()
-                    fill_count += 1
-                    ticker_dfs[ticker] = df_t
-                prog.progress((i + 1) / len(need_list),
-                              text=f"최신 종가 보완 중... ({i+1}/{len(need_list)})")
-            prog.empty()
-
-        # Close가 여전히 NaN인 행 제거
-        for ticker in TICKERS:
-            df_t = ticker_dfs.get(ticker)
-            if df_t is None:
-                continue
-            ticker_dfs[ticker] = df_t[df_t["Close"].notna()].copy()
+        ref_date_str = None  # 화면 표시용 기준일
 
         for ticker in TICKERS:
             try:
@@ -464,8 +330,7 @@ with left_col:
                 if data.empty or len(data) < 200:
                     continue
 
-                # ── 기준 행 선택 ──
-                # after_close(평일 장마감 후)면 오늘 포함, 아니면 오늘 미만의 마지막 거래일
+                # ── 기준 행 선택: 이미 마감된 가장 최근 거래일까지만 사용 ──
                 if after_close:
                     usable = data
                 else:
@@ -482,7 +347,7 @@ with left_col:
                 rsi_series = calculate_rsi(close_series)
                 atr_series = calculate_atr(usable)
 
-                # 기준일 = usable의 마지막 행 (이미 마감된 가장 최근 거래일)
+                # 기준일 = usable의 마지막 행
                 price = float(close_series.iloc[-1])
                 ma20 = float(ma20_series.iloc[-1])
                 ma100 = float(ma100_series.iloc[-1])
@@ -494,24 +359,27 @@ with left_col:
                 if pd.isna(ma20) or pd.isna(rsi) or pd.isna(price) or pd.isna(atr):
                     continue
 
+                # 첫 유효 종목에서 기준일 기록
+                if ref_date_str is None:
+                    ref_date_str = usable.index[-1].strftime('%Y-%m-%d')
+
                 distance = (price - ma20) / ma20 * 100
 
                 is_match = (price > ma20) and (rsi_min <= rsi <= rsi_max)
-                
+
                 if exclude_drop_active and is_match:
                     recent_close = close_series.iloc[-30:]
                     recent_ma20 = ma20_series.iloc[-30:]
                     recent_distances = (recent_close - recent_ma20) / recent_ma20 * 100
-                    
+                    recent_distances = recent_distances.dropna()
                     if (recent_distances <= -drop_threshold).any():
                         is_match = False
                     if (recent_distances >= surge_threshold).any():
                         is_match = False
-                
+
                 if volume_filter_active and is_match:
                     value_series = close_series * volume_series
-                    # usable은 이미 기준일(마감 완료된 최근 거래일)까지 잘려 있으므로
-                    # 항상 마지막 행을 포함해 최근 3일/20일 평균을 계산
+                    # usable은 이미 기준일까지 잘려 있으므로 항상 마지막 포함 계산
                     avg_value_3d = value_series.iloc[-3:].mean()
                     avg_value_20d = value_series.iloc[-20:].mean()
 
@@ -521,7 +389,7 @@ with left_col:
                             is_match = False
                     else:
                         is_match = False
-                
+
                 if trend_filter_100 and price <= ma100:
                     is_match = False
                 if trend_filter_200 and price <= ma200:
@@ -548,29 +416,41 @@ with left_col:
             st.session_state.results_df = pd.DataFrame()
             st.session_state.selected_ticker = None
 
-        # 기준일 표시용 정보 저장 (대표로 첫 유효 종목 기준)
-        ref_date_str = None
-        for _t in TICKERS:
-            _d = ticker_dfs.get(_t)
-            if _d is not None and not _d.empty:
-                _u = _d if after_close else _d[_d.index < today_us]
-                if not _u.empty:
-                    ref_date_str = _u.index[-1].strftime('%Y-%m-%d (%a)')
-                    break
-        st.session_state.ref_date_str = ref_date_str
-        st.session_state.stooq_fill_count = fill_count
+        # 화면 표시용: 기준 종가일 + 시장 상태 + 조회 시각 저장
+        try:
+            if ref_date_str:
+                _d = pd.Timestamp(ref_date_str)
+                wd_kr = ['월', '화', '수', '목', '금', '토', '일'][_d.weekday()]
+                st.session_state.ref_date_str = f"{ref_date_str} ({wd_kr})"
+            else:
+                st.session_state.ref_date_str = None
+        except Exception:
+            st.session_state.ref_date_str = ref_date_str
+        if is_market_open_now:
+            st.session_state.market_status = "미국 장중 (직전 거래일 종가 기준)"
+        elif after_close:
+            st.session_state.market_status = "미국 장 마감 후 (당일 종가 기준)"
+        else:
+            st.session_state.market_status = "미국 장 시작 전·주말 (최근 거래일 종가 기준)"
+        st.session_state.scan_time_kst = datetime.now(pytz.timezone('Asia/Seoul')).strftime('%Y-%m-%d %H:%M')
 
     if st.session_state.results_df is not None:
         df = st.session_state.results_df
         st.subheader("📋 스캔된 종목 리스트")
+
         _ref = st.session_state.get("ref_date_str")
         if _ref:
-            _fill = st.session_state.get("stooq_fill_count", 0)
-            _msg = f"📅 기준 종가일: **{_ref}**"
-            if _fill:
-                _msg += f"  ·  보조 소스(Stooq)로 {_fill}개 종목 최신 종가 보완"
-            st.caption(_msg)
-        
+            _status = st.session_state.get("market_status", "")
+            _scan = st.session_state.get("scan_time_kst", "")
+            st.markdown(f"""
+                <div style="background-color:#161b22; border:1px solid #1f6feb;
+                            border-radius:8px; padding:10px 14px; margin-bottom:12px;">
+                    <span style="color:#58a6ff; font-weight:600;">📅 기준 종가일: {_ref}</span>
+                    <span style="color:#8b949e;">　|　{_status}</span>
+                    <span style="color:#6e7681; font-size:12px;">　|　조회: {_scan} KST</span>
+                </div>
+            """, unsafe_allow_html=True)
+
         if df.empty:
             st.warning("조건에 맞는 종목이 없습니다.")
         else:
@@ -648,7 +528,7 @@ with right_col:
             # 단일 티커인데 MultiIndex인 경우 (최신 yfinance) → level1에서 ticker 제거
             chart.columns = chart.columns.get_level_values(0)
 
-        # 종가가 비어있는 미확정 행 제거 (클라우드에서 발생)
+        # 종가가 비어있는 미확정 행 제거 (마지막 봉이 깨지는 것 방지)
         chart["Close"] = pd.to_numeric(chart["Close"], errors="coerce")
         chart = chart[chart["Close"].notna()]
 
