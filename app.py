@@ -262,30 +262,40 @@ with left_col:
     if search_clicked:
         results = []
 
-        # 1. 미국 동부 시간 기준 로직 설정
         us_eastern = pytz.timezone('US/Eastern')
         now_us = datetime.now(us_eastern)
-
         market_open  = now_us.replace(hour=9,  minute=30, second=0, microsecond=0)
         market_close = now_us.replace(hour=16, minute=0,  second=0, microsecond=0)
         weekday = now_us.weekday()
-
         is_market_open_now = (weekday < 5) and (market_open <= now_us < market_close)
         idx = -2 if is_market_open_now else -1
-        
+
         with st.spinner("데이터 수집 중..."):
-            all_data = yf.download(TICKERS, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'), 
-                                   auto_adjust=True, group_by="ticker", progress=False, threads=True)
-        
-        available_tickers = all_data.columns.levels[0] if isinstance(all_data.columns, pd.MultiIndex) else all_data.columns
+            raw = yf.download(
+                TICKERS,
+                start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'),
+                auto_adjust=True,
+                group_by="ticker",
+                progress=False,
+                threads=True
+            )
+
+        # ✅ 핵심 수정: yfinance 버전 무관하게 MultiIndex 축 정규화
+        if isinstance(raw.columns, pd.MultiIndex):
+            # level 0가 OHLCV인지 ticker인지 판별
+            if raw.columns.get_level_values(0)[0] in ["Open", "High", "Low", "Close", "Volume", "Adj Close"]:
+                # 최신 yfinance: (OHLCV, ticker) → (ticker, OHLCV)로 swap
+                raw = raw.swaplevel(axis=1).sort_index(axis=1)
 
         for ticker in TICKERS:
             try:
-                if ticker not in available_tickers: continue
-                
-                ticker_data = all_data[ticker] if isinstance(all_data.columns, pd.MultiIndex) else all_data
-                data = ticker_data.dropna(subset=["Close"])
-                if data.empty or len(data) < 200: continue
+                if ticker not in raw.columns.get_level_values(0):
+                    continue
+
+                ticker_data = raw[ticker].dropna(subset=["Close"])
+                data = ticker_data
+                if data.empty or len(data) < 200:
+                    continue
 
                 close_series = data["Close"]
                 volume_series = data["Volume"]
