@@ -277,7 +277,7 @@ with left_col:
                 auto_adjust=True,
                 group_by="ticker",
                 progress=False,
-                threads=True
+                threads=False
             )
 
         # yfinance 버전 무관하게 티커별 DataFrame으로 분리
@@ -298,7 +298,6 @@ with left_col:
                 for ticker in TICKERS:
                     if ticker in lv0:
                         df_t = raw[ticker].copy()
-                        df_t = df_t.dropna(how='all')
                         df_t = df_t.dropna(subset=["Close"])
                         ticker_dfs[ticker] = df_t
         else:
@@ -334,7 +333,7 @@ with left_col:
                 atr = float(atr_series.iloc[idx])
                 stop_price = ma20 - (atr * 1.5)
 
-                if pd.isna(ma20) or pd.isna(rsi) or pd.isna(price) or pd.isna(atr):
+                if pd.isna(ma20) or pd.isna(rsi):
                     continue
 
                 distance = (price - ma20) / ma20 * 100
@@ -571,3 +570,4 @@ with right_col:
     elif st.session_state.results_df is not None and st.session_state.results_df.empty:
         with right_col:
             st.info("좌측에서 조건을 설정한 후 검색 버튼을 눌러주세요.")
+            
