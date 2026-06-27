@@ -280,6 +280,41 @@ with left_col:
                 threads=True
             )
 
+        # ===== 🔍 DEBUG: 실제 데이터 구조 확인 =====
+        with st.expander("🔍 DEBUG - 클라우드 데이터 구조 확인 (문제 해결 후 삭제 예정)", expanded=True):
+            st.write(f"**yfinance 버전:** {yf.__version__}")
+            st.write(f"**raw.shape:** {raw.shape}")
+            st.write(f"**MultiIndex 여부:** {isinstance(raw.columns, pd.MultiIndex)}")
+            if isinstance(raw.columns, pd.MultiIndex):
+                st.write(f"**level 0 샘플 (앞 5개):** {raw.columns.get_level_values(0).unique().tolist()[:5]}")
+                st.write(f"**level 1 샘플 (앞 5개):** {raw.columns.get_level_values(1).unique().tolist()[:5]}")
+            else:
+                st.write(f"**columns:** {raw.columns.tolist()[:10]}")
+            st.write(f"**is_market_open_now:** {is_market_open_now}")
+            st.write(f"**idx:** {idx}")
+            st.write(f"**현재 미국 동부 시간:** {now_us.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+            # AAPL 하나만 꺼내서 구조 확인
+            try:
+                ohlcv_check = {"Open", "High", "Low", "Close", "Volume", "Adj Close"}
+                if isinstance(raw.columns, pd.MultiIndex):
+                    lv0_check = raw.columns.get_level_values(0).unique().tolist()
+                    lv1_check = raw.columns.get_level_values(1).unique().tolist()
+                    if set(lv0_check) & ohlcv_check:
+                        test = raw.xs("AAPL", axis=1, level=1) if "AAPL" in lv1_check else None
+                        st.write("**level0=OHLCV 구조 → xs(ticker, level=1) 사용**")
+                    else:
+                        test = raw["AAPL"] if "AAPL" in lv0_check else None
+                        st.write("**level0=ticker 구조 → raw[ticker] 사용**")
+                    if test is not None:
+                        st.write(f"**AAPL 추출 후 타입:** {type(test)}")
+                        st.write(f"**AAPL 추출 후 shape:** {test.shape}")
+                        st.write(f"**AAPL Close 타입:** {type(test['Close'])}")
+                        st.write(f"**AAPL Close.iloc[-1] 타입:** {type(test['Close'].squeeze().iloc[-1])}")
+                        st.write(f"**AAPL Close.iloc[-1] 값:** {test['Close'].squeeze().iloc[-1]}")
+            except Exception as e:
+                st.error(f"DEBUG 오류: {e}")
+        # ===== DEBUG 끝 =====
+
         # yfinance 버전 무관하게 티커별 DataFrame으로 분리
         ticker_dfs = {}
         if isinstance(raw.columns, pd.MultiIndex):
@@ -384,8 +419,8 @@ with left_col:
                         "괴리율(%)": round(distance, 2),
                         "RSI": round(rsi, 2),
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                st.warning(f"⚠️ [{ticker}] 오류: {e}")
 
         if results:
             df = pd.DataFrame(results)
