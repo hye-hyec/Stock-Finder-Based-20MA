@@ -176,10 +176,22 @@ def calculate_atr(data, period=14):
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
-@st.cache_data(ttl=300)
-def load_all_market_data(tickers):
+@st.cache_data(ttl=900, show_spinner=False)
+def load_all_market_data(tickers, cache_key):
+    """
+    전체 종목 1년치 일봉을 한 번에 받아 캐싱한다.
+    - threads=True: 종목들을 병렬 다운로드 (속도 대폭 향상)
+    - cache_key: 'YYYY-MM-DD-(전장후)' 형태. 날짜/장상태가 바뀌면 자동 갱신.
+    """
     start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
-    data = yf.download(tickers, start=start_date, auto_adjust=True, group_by="ticker", progress=False)
+    data = yf.download(
+        list(tickers),
+        start=start_date,
+        auto_adjust=True,
+        group_by="ticker",
+        progress=False,
+        threads=True
+    )
     return data
 
 @st.cache_data(ttl=300)
@@ -277,14 +289,15 @@ with left_col:
         after_close = (weekday < 5) and (now_us >= market_close)
 
         with st.spinner("데이터 수집 중..."):
-            raw = yf.download(
-                TICKERS,
-                start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'),
-                auto_adjust=True,
-                group_by="ticker",
-                progress=False,
-                threads=False
-            )
+            # 캐시 키: 날짜 + 장 상태(전/중/후). 같은 상태에서 재검색하면 즉시 반환.
+            if after_close:
+                _phase = "after"
+            elif is_market_open_now:
+                _phase = "open"
+            else:
+                _phase = "pre"
+            cache_key = f"{now_us.strftime('%Y-%m-%d')}-{_phase}"
+            raw = load_all_market_data(tuple(TICKERS), cache_key)
 
         raw = raw.sort_index()
 
