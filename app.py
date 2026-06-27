@@ -280,6 +280,27 @@ with left_col:
                 threads=False
             )
 
+        # ===== 🔍 DEEP DEBUG =====
+        with st.expander("🔍 DEEP DEBUG", expanded=True):
+            # AAPL 단독 다운로드
+            test_single = yf.download("AAPL", start=(datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d"), auto_adjust=True, progress=False)
+            st.write("**[단독] AAPL 마지막 5행:**")
+            st.dataframe(test_single.tail())
+            st.write(f"**[단독] 컬럼:** {test_single.columns.tolist()}")
+            st.write(f"**[단독] MultiIndex:** {isinstance(test_single.columns, pd.MultiIndex)}")
+
+            # raw에서 AAPL 추출
+            st.write("---")
+            st.write(f"**[raw] raw.columns.names:** {raw.columns.names}")
+            st.write(f"**[raw] level0 앞 5개:** {raw.columns.get_level_values(0).unique().tolist()[:5]}")
+            st.write(f"**[raw] level1 앞 5개:** {raw.columns.get_level_values(1).unique().tolist()[:5]}")
+            aapl_raw = raw["AAPL"] if "AAPL" in raw.columns.get_level_values(0) else raw.xs("AAPL", axis=1, level=1)
+            st.write("**[raw에서 추출] AAPL 마지막 5행:**")
+            st.dataframe(aapl_raw.tail())
+            st.write(f"**[raw에서 추출] Close NaN 개수:** {aapl_raw['Close'].isna().sum()}")
+            st.write(f"**[raw에서 추출] 전체 행 수:** {len(aapl_raw)}")
+        # ===== DEEP DEBUG 끝 =====
+
         # yfinance 버전 무관하게 티커별 DataFrame으로 분리
         ticker_dfs = {}
         if isinstance(raw.columns, pd.MultiIndex):
