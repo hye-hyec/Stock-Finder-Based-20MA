@@ -167,9 +167,9 @@ def calculate_rsi(close, period=14):
     return 100 - (100 / (1 + rs))
 
 def calculate_atr(data, period=14):
-    high = data['High']
-    low = data['Low']
-    close = data['Close'].shift()
+    high = data['High'].squeeze()
+    low = data['Low'].squeeze()
+    close = data['Close'].squeeze().shift()
     tr1 = high - low
     tr2 = abs(high - close)
     tr3 = abs(low - close)
@@ -280,25 +280,44 @@ with left_col:
                 threads=True
             )
 
-        # ✅ 핵심 수정: yfinance 버전 무관하게 MultiIndex 축 정규화
+        # yfinance 버전 무관하게 티커별 DataFrame으로 분리
+        ticker_dfs = {}
         if isinstance(raw.columns, pd.MultiIndex):
-            # level 0가 OHLCV인지 ticker인지 판별
-            if raw.columns.get_level_values(0)[0] in ["Open", "High", "Low", "Close", "Volume", "Adj Close"]:
-                # 최신 yfinance: (OHLCV, ticker) → (ticker, OHLCV)로 swap
-                raw = raw.swaplevel(axis=1).sort_index(axis=1)
+            lv0 = raw.columns.get_level_values(0).unique().tolist()
+            lv1 = raw.columns.get_level_values(1).unique().tolist()
+            ohlcv = {"Open", "High", "Low", "Close", "Volume", "Adj Close"}
+            # 최신 yfinance: level0=OHLCV, level1=ticker
+            if set(lv0) & ohlcv:
+                for ticker in TICKERS:
+                    if ticker in lv1:
+                        df_t = raw.xs(ticker, axis=1, level=1).copy()
+                        df_t = df_t.dropna(subset=["Close"])
+                        ticker_dfs[ticker] = df_t
+            # 구버전 yfinance: level0=ticker, level1=OHLCV
+            else:
+                for ticker in TICKERS:
+                    if ticker in lv0:
+                        df_t = raw[ticker].copy()
+                        df_t = df_t.dropna(subset=["Close"])
+                        ticker_dfs[ticker] = df_t
+        else:
+            # 티커 1개일 때 (비정상 케이스 방어)
+            raw2 = raw.dropna(subset=["Close"])
+            if TICKERS:
+                ticker_dfs[TICKERS[0]] = raw2
 
         for ticker in TICKERS:
             try:
-                if ticker not in raw.columns.get_level_values(0):
+                if ticker not in ticker_dfs:
                     continue
 
-                ticker_data = raw[ticker].dropna(subset=["Close"])
-                data = ticker_data
+                data = ticker_dfs[ticker]
                 if data.empty or len(data) < 200:
                     continue
 
-                close_series = data["Close"]
-                volume_series = data["Volume"]
+                # 컬럼이 Series로 나오는 경우 squeeze
+                close_series = data["Close"].squeeze()
+                volume_series = data["Volume"].squeeze()
                 
                 ma20_series = close_series.rolling(20).mean()
                 ma100_series = close_series.rolling(100).mean()
@@ -455,6 +474,7 @@ with right_col:
         chart = yf.download(selected_ticker, period="1y", auto_adjust=True, progress=False)
 
         if isinstance(chart.columns, pd.MultiIndex):
+            # 단일 티커인데 MultiIndex인 경우 (최신 yfinance) → level1에서 ticker 제거
             chart.columns = chart.columns.get_level_values(0)
 
         chart["MA20"] = chart["Close"].rolling(20).mean()
