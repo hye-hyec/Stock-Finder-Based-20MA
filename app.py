@@ -5,10 +5,6 @@ import plotly.graph_objects as go
 import pytz
 from datetime import datetime, timedelta
 
-if st.sidebar.button("데이터 강제 갱신(Cache Clear)"):
-    st.cache_data.clear()
-    st.rerun()
-
 st.set_page_config(page_title="NASDAQ Scanner Pro", page_icon="📈", layout="wide")
 
 # --- 🖤 고급스러운 트레이딩 룸 느낌의 딥다크 CSS ---
@@ -180,7 +176,7 @@ def calculate_atr(data, period=14):
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=0)
 def load_all_market_data(tickers):
     start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     data = yf.download(tickers, start=start_date, auto_adjust=True, group_by="ticker", progress=False)
