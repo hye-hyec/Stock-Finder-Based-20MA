@@ -3,7 +3,40 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 import pytz
+import io
+import urllib.request
 from datetime import datetime, timedelta
+
+
+@st.cache_data(ttl=600)
+def fetch_stooq_recent(ticker, days=15):
+    """
+    Stooq에서 최근 일봉을 받아온다(보조 소스).
+    yfinance가 클라우드 환경에서 최근 종가를 NaN으로 주는 경우를 보완.
+    반환: Date 인덱스 + ['Open','High','Low','Close','Volume'] DataFrame, 실패 시 None
+    """
+    try:
+        sym = ticker.lower().replace('.', '-') + '.us'
+        end = datetime.now()
+        start = end - timedelta(days=days + 5)
+        url = (
+            f"https://stooq.com/q/d/l/?s={sym}"
+            f"&d1={start.strftime('%Y%m%d')}&d2={end.strftime('%Y%m%d')}&i=d"
+        )
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            text = resp.read().decode('utf-8', errors='ignore')
+        if not text or 'Date' not in text:
+            return None
+        df = pd.read_csv(io.StringIO(text))
+        if 'Close' not in df.columns or df.empty:
+            return None
+        df['Date'] = pd.to_datetime(df['Date'])
+        df = df.set_index('Date').sort_index()
+        keep = [c for c in ['Open', 'High', 'Low', 'Close', 'Volume'] if c in df.columns]
+        return df[keep]
+    except Exception:
+        return None
 
 st.set_page_config(page_title="NASDAQ Scanner Pro", page_icon="📈", layout="wide")
 
@@ -270,6 +303,14 @@ with left_col:
         is_market_open_now = (weekday < 5) and (market_open <= now_us < market_close)
         idx = -2 if is_market_open_now else -1
 
+        # ── 기준일 규칙 ──
+        # "이미 장 마감이 끝난 가장 최근 거래일"의 종가로 계산한다.
+        #   · 평일 16:00 ET 이후  → 오늘 종가 사용 가능
+        #   · 평일 장중/장전, 주말 → 직전 거래일 종가
+        # 아래에서 raw의 실제 날짜를 보고 "쓸 수 있는 마지막 확정일"을 고른다.
+        today_us = pd.Timestamp(now_us.strftime('%Y-%m-%d'))
+        after_close = (weekday < 5) and (now_us >= market_close)
+
         with st.spinner("데이터 수집 중..."):
             raw = yf.download(
                 TICKERS,
@@ -280,146 +321,150 @@ with left_col:
                 threads=False
             )
 
-        # ===== 🔍 DEBUG 카운터 =====
-        import platform
-        dbg = {
-            "yf_version": yf.__version__,
-            "pd_version": pd.__version__,
-            "python": platform.python_version(),
-            "raw_shape": str(raw.shape),
-            "is_market_open_now": is_market_open_now,
-            "idx": idx,
-            "now_us": now_us.strftime("%Y-%m-%d %H:%M %Z"),
-            "total_tickers": len(TICKERS),
-            "not_in_dfs": 0,
-            "too_short": 0,
-            "nan_ma_rsi": 0,
-            "fail_price_gt_ma20": 0,
-            "fail_rsi_range": 0,
-            "fail_exclude_drop": 0,
-            "fail_volume": 0,
-            "fail_trend100": 0,
-            "fail_trend200": 0,
-            "exception": 0,
-            "passed": 0,
-        }
-        # ===== DEBUG 끝 =====
+        raw = raw.sort_index()
 
-        # yfinance 버전 무관하게 티커별 DataFrame으로 분리
+        # ── 티커별 DataFrame으로 분리 (yfinance 버전·MultiIndex 구조 무관) ──
         ticker_dfs = {}
         if isinstance(raw.columns, pd.MultiIndex):
-            lv0 = raw.columns.get_level_values(0).unique().tolist()
-            lv1 = raw.columns.get_level_values(1).unique().tolist()
-            ohlcv = {"Open", "High", "Low", "Close", "Volume", "Adj Close"}
-            # 최신 yfinance: level0=OHLCV, level1=ticker
-            if set(lv0) & ohlcv:
-                for ticker in TICKERS:
-                    if ticker in lv1:
-                        df_t = raw.xs(ticker, axis=1, level=1).copy()
-                        df_t = df_t.dropna(subset=["Close"])
-                        ticker_dfs[ticker] = df_t
-            # 구버전 yfinance: level0=ticker, level1=OHLCV
+            names = raw.columns.names
+            if names[0] == 'Ticker':
+                ticker_level = 0
+            elif names[-1] == 'Ticker':
+                ticker_level = 1
             else:
-                for ticker in TICKERS:
-                    if ticker in lv0:
-                        df_t = raw[ticker].copy()
-                        df_t = df_t.dropna(subset=["Close"])
-                        ticker_dfs[ticker] = df_t
+                # 이름이 없으면 값으로 판별: OHLCV가 들어있는 레벨이 price level
+                ohlcv = {"Open", "High", "Low", "Close", "Volume", "Adj Close"}
+                lv0 = set(raw.columns.get_level_values(0))
+                ticker_level = 1 if (lv0 & ohlcv) else 0
+            all_tickers_in_raw = list(raw.columns.get_level_values(ticker_level).unique())
+            for ticker in TICKERS:
+                if ticker in all_tickers_in_raw:
+                    df_t = raw.xs(ticker, axis=1, level=ticker_level).copy()
+                    for col in ["Open", "High", "Low", "Close", "Volume"]:
+                        if col in df_t.columns:
+                            df_t[col] = pd.to_numeric(df_t[col], errors="coerce")
+                    ticker_dfs[ticker] = df_t
         else:
-            # 티커 1개일 때 (비정상 케이스 방어)
-            raw2 = raw.dropna(subset=["Close"])
+            df_t = raw.copy()
+            for col in ["Open", "High", "Low", "Close", "Volume"]:
+                if col in df_t.columns:
+                    df_t[col] = pd.to_numeric(df_t[col], errors="coerce")
             if TICKERS:
-                ticker_dfs[TICKERS[0]] = raw2
+                ticker_dfs[TICKERS[0]] = df_t
+
+        # ── Stooq 보조: 최근 확정 거래일 종가가 비어 있으면 메꾼다 ──
+        # 평일 장 마감 후가 아니면 '오늘' 행은 아직 미확정이므로 보충 대상에서 제외.
+        def needs_fill(df):
+            """가장 최근(오늘 제외) 거래일 종가가 NaN이면 True"""
+            if df is None or df.empty:
+                return False
+            sub = df[df.index < today_us] if not after_close else df
+            sub = sub.dropna(subset=["Close"]) if "Close" in sub.columns else sub
+            # 원본에서 '최근 거래일' 종가가 비었는지: 오늘 제외한 마지막 인덱스 확인
+            ref = df[df.index < today_us] if not after_close else df
+            if ref.empty:
+                return False
+            last_close = ref["Close"].iloc[-1] if "Close" in ref.columns else None
+            return pd.isna(last_close)
+
+        fill_count = 0
+        for ticker in TICKERS:
+            df_t = ticker_dfs.get(ticker)
+            if df_t is None:
+                continue
+            if needs_fill(df_t):
+                stooq = fetch_stooq_recent(ticker)
+                if stooq is not None and not stooq.empty:
+                    # yfinance에 없는/NaN인 날짜를 Stooq 값으로 채움
+                    for d, row in stooq.iterrows():
+                        if d in df_t.index:
+                            if pd.isna(df_t.at[d, "Close"]):
+                                for c in ["Open", "High", "Low", "Close", "Volume"]:
+                                    if c in stooq.columns:
+                                        df_t.at[d, c] = row[c]
+                        else:
+                            for c in ["Open", "High", "Low", "Close", "Volume"]:
+                                if c in stooq.columns:
+                                    df_t.at[d, c] = row[c]
+                    df_t = df_t.sort_index()
+                    fill_count += 1
+            # Close가 여전히 NaN인 행 제거
+            df_t = df_t[df_t["Close"].notna()].copy()
+            ticker_dfs[ticker] = df_t
 
         for ticker in TICKERS:
             try:
                 if ticker not in ticker_dfs:
-                    dbg["not_in_dfs"] += 1
                     continue
 
                 data = ticker_dfs[ticker]
                 if data.empty or len(data) < 200:
-                    dbg["too_short"] += 1
                     continue
 
-                # 컬럼이 Series로 나오는 경우 squeeze
-                close_series = data["Close"].squeeze()
-                volume_series = data["Volume"].squeeze()
-                
+                # ── 기준 행 선택 ──
+                # after_close(평일 장마감 후)면 오늘 포함, 아니면 오늘 미만의 마지막 거래일
+                if after_close:
+                    usable = data
+                else:
+                    usable = data[data.index < today_us]
+                if len(usable) < 200:
+                    continue
+
+                close_series = usable["Close"]
+                volume_series = usable["Volume"]
+
                 ma20_series = close_series.rolling(20).mean()
                 ma100_series = close_series.rolling(100).mean()
                 ma200_series = close_series.rolling(200).mean()
                 rsi_series = calculate_rsi(close_series)
-                atr_series = calculate_atr(data)
+                atr_series = calculate_atr(usable)
 
-                price = float(close_series.iloc[idx])
-                ma20 = float(ma20_series.iloc[idx])
-                ma100 = float(ma100_series.iloc[idx])
-                ma200 = float(ma200_series.iloc[idx])
-                rsi = float(rsi_series.iloc[idx])
-                atr = float(atr_series.iloc[idx])
+                # 기준일 = usable의 마지막 행 (이미 마감된 가장 최근 거래일)
+                price = float(close_series.iloc[-1])
+                ma20 = float(ma20_series.iloc[-1])
+                ma100 = float(ma100_series.iloc[-1])
+                ma200 = float(ma200_series.iloc[-1])
+                rsi = float(rsi_series.iloc[-1])
+                atr = float(atr_series.iloc[-1])
                 stop_price = ma20 - (atr * 1.5)
 
-                if pd.isna(ma20) or pd.isna(rsi):
-                    dbg["nan_ma_rsi"] += 1
+                if pd.isna(ma20) or pd.isna(rsi) or pd.isna(price) or pd.isna(atr):
                     continue
 
                 distance = (price - ma20) / ma20 * 100
 
-                cond_price = (price > ma20)
-                cond_rsi = (rsi_min <= rsi <= rsi_max)
-                if not cond_price:
-                    dbg["fail_price_gt_ma20"] += 1
-                if cond_price and not cond_rsi:
-                    dbg["fail_rsi_range"] += 1
-                is_match = cond_price and cond_rsi
+                is_match = (price > ma20) and (rsi_min <= rsi <= rsi_max)
                 
                 if exclude_drop_active and is_match:
                     recent_close = close_series.iloc[-30:]
                     recent_ma20 = ma20_series.iloc[-30:]
                     recent_distances = (recent_close - recent_ma20) / recent_ma20 * 100
                     
-                    _before = is_match
                     if (recent_distances <= -drop_threshold).any():
                         is_match = False
                     if (recent_distances >= surge_threshold).any():
                         is_match = False
-                    if _before and not is_match:
-                        dbg["fail_exclude_drop"] += 1
                 
                 if volume_filter_active and is_match:
                     value_series = close_series * volume_series
-                    
-                    # 4. 거래대금 계산도 장중 여부에 맞춰 완벽하게 분리
-                    if not is_market_open_now:
-                        # 장 시작 전, 마감 후, 주말: 마지막 거래일 포함 완결된 최근 3일/20일 평균
-                        avg_value_3d = value_series.iloc[-3:].mean()
-                        avg_value_20d = value_series.iloc[-20:].mean()
-                    else:
-                        # 장중: 미완성 당일 데이터(-1)는 통계에서 제외하고, 어제 기준 3일/20일 평균
-                        avg_value_3d = value_series.iloc[-4:-1].mean()
-                        avg_value_20d = value_series.iloc[-21:-1].mean()
-                    
+                    # usable은 이미 기준일(마감 완료된 최근 거래일)까지 잘려 있으므로
+                    # 항상 마지막 행을 포함해 최근 3일/20일 평균을 계산
+                    avg_value_3d = value_series.iloc[-3:].mean()
+                    avg_value_20d = value_series.iloc[-20:].mean()
+
                     if avg_value_20d > 0:
                         ratio = (avg_value_3d / avg_value_20d) * 100
                         if ratio < volume_threshold:
                             is_match = False
-                            dbg["fail_volume"] += 1
                     else:
                         is_match = False
-                        dbg["fail_volume"] += 1
                 
                 if trend_filter_100 and price <= ma100:
-                    if is_match:
-                        dbg["fail_trend100"] += 1
                     is_match = False
                 if trend_filter_200 and price <= ma200:
-                    if is_match:
-                        dbg["fail_trend200"] += 1
                     is_match = False
 
                 if is_match:
-                    dbg["passed"] += 1
                     results.append({
                         "종목": ticker,
                         "현재가": round(price, 2),
@@ -428,19 +473,8 @@ with left_col:
                         "괴리율(%)": round(distance, 2),
                         "RSI": round(rsi, 2),
                     })
-            except Exception as e:
-                dbg["exception"] += 1
-
-        # ===== 🔍 DEBUG 결과 출력 =====
-        with st.expander("🔍 DEBUG - 필터 통과/탈락 분석", expanded=True):
-            st.json(dbg)
-            # 전체 raw를 CSV로 저장 (로컬/클라우드 비교용)
-            import io
-            buf = io.BytesIO()
-            raw.to_csv(buf)
-            buf.seek(0)
-            st.download_button("⬇️ 전체 raw CSV 다운로드 (로컬/클라우드 비교용)", buf, "raw_full.csv", "text/csv")
-        # ===== DEBUG 끝 =====
+            except Exception:
+                pass
 
         if results:
             df = pd.DataFrame(results)
@@ -451,9 +485,28 @@ with left_col:
             st.session_state.results_df = pd.DataFrame()
             st.session_state.selected_ticker = None
 
+        # 기준일 표시용 정보 저장 (대표로 첫 유효 종목 기준)
+        ref_date_str = None
+        for _t in TICKERS:
+            _d = ticker_dfs.get(_t)
+            if _d is not None and not _d.empty:
+                _u = _d if after_close else _d[_d.index < today_us]
+                if not _u.empty:
+                    ref_date_str = _u.index[-1].strftime('%Y-%m-%d (%a)')
+                    break
+        st.session_state.ref_date_str = ref_date_str
+        st.session_state.stooq_fill_count = fill_count
+
     if st.session_state.results_df is not None:
         df = st.session_state.results_df
         st.subheader("📋 스캔된 종목 리스트")
+        _ref = st.session_state.get("ref_date_str")
+        if _ref:
+            _fill = st.session_state.get("stooq_fill_count", 0)
+            _msg = f"📅 기준 종가일: **{_ref}**"
+            if _fill:
+                _msg += f"  ·  보조 소스(Stooq)로 {_fill}개 종목 최신 종가 보완"
+            st.caption(_msg)
         
         if df.empty:
             st.warning("조건에 맞는 종목이 없습니다.")
@@ -531,6 +584,10 @@ with right_col:
         if isinstance(chart.columns, pd.MultiIndex):
             # 단일 티커인데 MultiIndex인 경우 (최신 yfinance) → level1에서 ticker 제거
             chart.columns = chart.columns.get_level_values(0)
+
+        # 종가가 비어있는 미확정 행 제거 (클라우드에서 발생)
+        chart["Close"] = pd.to_numeric(chart["Close"], errors="coerce")
+        chart = chart[chart["Close"].notna()]
 
         chart["MA20"] = chart["Close"].rolling(20).mean()
         chart["MA100"] = chart["Close"].rolling(100).mean()
