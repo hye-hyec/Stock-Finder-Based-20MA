@@ -280,110 +280,146 @@ with left_col:
                 threads=False
             )
 
-        # ── 티커별 DataFrame 추출 (yfinance 버전·MultiIndex 구조 무관) ──
+        # ===== 🔍 DEBUG 카운터 =====
+        import platform
+        dbg = {
+            "yf_version": yf.__version__,
+            "pd_version": pd.__version__,
+            "python": platform.python_version(),
+            "raw_shape": str(raw.shape),
+            "is_market_open_now": is_market_open_now,
+            "idx": idx,
+            "now_us": now_us.strftime("%Y-%m-%d %H:%M %Z"),
+            "total_tickers": len(TICKERS),
+            "not_in_dfs": 0,
+            "too_short": 0,
+            "nan_ma_rsi": 0,
+            "fail_price_gt_ma20": 0,
+            "fail_rsi_range": 0,
+            "fail_exclude_drop": 0,
+            "fail_volume": 0,
+            "fail_trend100": 0,
+            "fail_trend200": 0,
+            "exception": 0,
+            "passed": 0,
+        }
+        # ===== DEBUG 끝 =====
+
+        # yfinance 버전 무관하게 티커별 DataFrame으로 분리
         ticker_dfs = {}
         if isinstance(raw.columns, pd.MultiIndex):
-            # column names 로 level 순서 판별
-            names = raw.columns.names  # e.g. ['Ticker','Price'] or ['Price','Ticker']
-            if names[0] == 'Ticker':
-                ticker_level, price_level = 0, 1
+            lv0 = raw.columns.get_level_values(0).unique().tolist()
+            lv1 = raw.columns.get_level_values(1).unique().tolist()
+            ohlcv = {"Open", "High", "Low", "Close", "Volume", "Adj Close"}
+            # 최신 yfinance: level0=OHLCV, level1=ticker
+            if set(lv0) & ohlcv:
+                for ticker in TICKERS:
+                    if ticker in lv1:
+                        df_t = raw.xs(ticker, axis=1, level=1).copy()
+                        df_t = df_t.dropna(subset=["Close"])
+                        ticker_dfs[ticker] = df_t
+            # 구버전 yfinance: level0=ticker, level1=OHLCV
             else:
-                ticker_level, price_level = 1, 0
-            all_tickers_in_raw = raw.columns.get_level_values(ticker_level).unique().tolist()
-            for t in TICKERS:
-                if t in all_tickers_in_raw:
-                    df_t = raw.xs(t, axis=1, level=ticker_level).copy()
-                    # Close를 수치형으로 강제 변환 후 NaN 행 제거
-                    df_t["Close"] = pd.to_numeric(df_t["Close"], errors="coerce")
-                    df_t["Volume"] = pd.to_numeric(df_t["Volume"], errors="coerce")
-                    df_t = df_t[df_t["Close"].notna()].copy()
-                    ticker_dfs[t] = df_t
+                for ticker in TICKERS:
+                    if ticker in lv0:
+                        df_t = raw[ticker].copy()
+                        df_t = df_t.dropna(subset=["Close"])
+                        ticker_dfs[ticker] = df_t
         else:
-            raw2 = raw.copy()
-            raw2["Close"] = pd.to_numeric(raw2["Close"], errors="coerce")
-            raw2 = raw2[raw2["Close"].notna()].copy()
+            # 티커 1개일 때 (비정상 케이스 방어)
+            raw2 = raw.dropna(subset=["Close"])
             if TICKERS:
                 ticker_dfs[TICKERS[0]] = raw2
 
         for ticker in TICKERS:
             try:
                 if ticker not in ticker_dfs:
+                    dbg["not_in_dfs"] += 1
                     continue
 
                 data = ticker_dfs[ticker]
                 if data.empty or len(data) < 200:
+                    dbg["too_short"] += 1
                     continue
 
-                close_series = pd.to_numeric(data["Close"], errors="coerce")
-                volume_series = pd.to_numeric(data["Volume"], errors="coerce")
-
-                # 완전히 유효한 마지막 종가 인덱스를 직접 찾음
-                # (장중이면 당일 미완성 데이터 제외, 아니면 마지막 완결 데이터)
-                valid_close = close_series.dropna()
-                if len(valid_close) < 200:
-                    continue
-                if is_market_open_now:
-                    # 장중: 마지막 완결 거래일 = 전날 (-2번째 유효값)
-                    ref_close = valid_close.iloc[-2]
-                    ref_pos   = len(valid_close) - 2   # rolling 계산용 position
-                else:
-                    ref_close = valid_close.iloc[-1]
-                    ref_pos   = len(valid_close) - 1
-
-                ma20_series  = close_series.rolling(20).mean()
+                # 컬럼이 Series로 나오는 경우 squeeze
+                close_series = data["Close"].squeeze()
+                volume_series = data["Volume"].squeeze()
+                
+                ma20_series = close_series.rolling(20).mean()
                 ma100_series = close_series.rolling(100).mean()
                 ma200_series = close_series.rolling(200).mean()
-                rsi_series   = calculate_rsi(close_series)
-                atr_series   = calculate_atr(data)
+                rsi_series = calculate_rsi(close_series)
+                atr_series = calculate_atr(data)
 
-                # valid_close 기준 position으로 값 추출
-                price = float(ref_close)
-                ma20  = float(ma20_series.iloc[ref_pos])
-                ma100 = float(ma100_series.iloc[ref_pos])
-                ma200 = float(ma200_series.iloc[ref_pos])
-                rsi   = float(rsi_series.iloc[ref_pos])
-                atr   = float(atr_series.iloc[ref_pos])
+                price = float(close_series.iloc[idx])
+                ma20 = float(ma20_series.iloc[idx])
+                ma100 = float(ma100_series.iloc[idx])
+                ma200 = float(ma200_series.iloc[idx])
+                rsi = float(rsi_series.iloc[idx])
+                atr = float(atr_series.iloc[idx])
                 stop_price = ma20 - (atr * 1.5)
 
-                if pd.isna(price) or pd.isna(ma20) or pd.isna(rsi) or pd.isna(atr):
+                if pd.isna(ma20) or pd.isna(rsi):
+                    dbg["nan_ma_rsi"] += 1
                     continue
 
                 distance = (price - ma20) / ma20 * 100
-                is_match = (price > ma20) and (rsi_min <= rsi <= rsi_max)
 
+                cond_price = (price > ma20)
+                cond_rsi = (rsi_min <= rsi <= rsi_max)
+                if not cond_price:
+                    dbg["fail_price_gt_ma20"] += 1
+                if cond_price and not cond_rsi:
+                    dbg["fail_rsi_range"] += 1
+                is_match = cond_price and cond_rsi
+                
                 if exclude_drop_active and is_match:
-                    # 최근 30 거래일은 valid_close 기준으로 슬라이싱
-                    recent_close = valid_close.iloc[max(0, ref_pos-29) : ref_pos+1]
-                    recent_ma20  = ma20_series.reindex(recent_close.index)
+                    recent_close = close_series.iloc[-30:]
+                    recent_ma20 = ma20_series.iloc[-30:]
                     recent_distances = (recent_close - recent_ma20) / recent_ma20 * 100
-                    recent_distances = recent_distances.dropna()
+                    
+                    _before = is_match
                     if (recent_distances <= -drop_threshold).any():
                         is_match = False
                     if (recent_distances >= surge_threshold).any():
                         is_match = False
-
+                    if _before and not is_match:
+                        dbg["fail_exclude_drop"] += 1
+                
                 if volume_filter_active and is_match:
-                    value_series = valid_close * volume_series.reindex(valid_close.index)
-                    if is_market_open_now:
-                        avg_value_3d  = value_series.iloc[max(0,ref_pos-3):ref_pos].mean()
-                        avg_value_20d = value_series.iloc[max(0,ref_pos-20):ref_pos].mean()
+                    value_series = close_series * volume_series
+                    
+                    # 4. 거래대금 계산도 장중 여부에 맞춰 완벽하게 분리
+                    if not is_market_open_now:
+                        # 장 시작 전, 마감 후, 주말: 마지막 거래일 포함 완결된 최근 3일/20일 평균
+                        avg_value_3d = value_series.iloc[-3:].mean()
+                        avg_value_20d = value_series.iloc[-20:].mean()
                     else:
-                        avg_value_3d  = value_series.iloc[max(0,ref_pos-2):ref_pos+1].mean()
-                        avg_value_20d = value_series.iloc[max(0,ref_pos-19):ref_pos+1].mean()
-
+                        # 장중: 미완성 당일 데이터(-1)는 통계에서 제외하고, 어제 기준 3일/20일 평균
+                        avg_value_3d = value_series.iloc[-4:-1].mean()
+                        avg_value_20d = value_series.iloc[-21:-1].mean()
+                    
                     if avg_value_20d > 0:
                         ratio = (avg_value_3d / avg_value_20d) * 100
                         if ratio < volume_threshold:
                             is_match = False
+                            dbg["fail_volume"] += 1
                     else:
                         is_match = False
-
+                        dbg["fail_volume"] += 1
+                
                 if trend_filter_100 and price <= ma100:
+                    if is_match:
+                        dbg["fail_trend100"] += 1
                     is_match = False
                 if trend_filter_200 and price <= ma200:
+                    if is_match:
+                        dbg["fail_trend200"] += 1
                     is_match = False
 
                 if is_match:
+                    dbg["passed"] += 1
                     results.append({
                         "종목": ticker,
                         "현재가": round(price, 2),
@@ -392,8 +428,19 @@ with left_col:
                         "괴리율(%)": round(distance, 2),
                         "RSI": round(rsi, 2),
                     })
-            except Exception:
-                pass
+            except Exception as e:
+                dbg["exception"] += 1
+
+        # ===== 🔍 DEBUG 결과 출력 =====
+        with st.expander("🔍 DEBUG - 필터 통과/탈락 분석", expanded=True):
+            st.json(dbg)
+            # 전체 raw를 CSV로 저장 (로컬/클라우드 비교용)
+            import io
+            buf = io.BytesIO()
+            raw.to_csv(buf)
+            buf.seek(0)
+            st.download_button("⬇️ 전체 raw CSV 다운로드 (로컬/클라우드 비교용)", buf, "raw_full.csv", "text/csv")
+        # ===== DEBUG 끝 =====
 
         if results:
             df = pd.DataFrame(results)
@@ -578,5 +625,4 @@ with right_col:
     elif st.session_state.results_df is not None and st.session_state.results_df.empty:
         with right_col:
             st.info("좌측에서 조건을 설정한 후 검색 버튼을 눌러주세요.")
-            
             
