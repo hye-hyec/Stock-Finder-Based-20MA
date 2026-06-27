@@ -280,50 +280,25 @@ with left_col:
                 threads=False
             )
 
-        # ===== 🔍 DEEP DEBUG =====
-        with st.expander("🔍 DEEP DEBUG", expanded=True):
-            # AAPL 단독 다운로드
-            test_single = yf.download("AAPL", start=(datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d"), auto_adjust=True, progress=False)
-            st.write("**[단독] AAPL 마지막 5행:**")
-            st.dataframe(test_single.tail())
-            st.write(f"**[단독] 컬럼:** {test_single.columns.tolist()}")
-            st.write(f"**[단독] MultiIndex:** {isinstance(test_single.columns, pd.MultiIndex)}")
-
-            # raw에서 AAPL 추출
-            st.write("---")
-            st.write(f"**[raw] raw.columns.names:** {raw.columns.names}")
-            st.write(f"**[raw] level0 앞 5개:** {raw.columns.get_level_values(0).unique().tolist()[:5]}")
-            st.write(f"**[raw] level1 앞 5개:** {raw.columns.get_level_values(1).unique().tolist()[:5]}")
-            aapl_raw = raw["AAPL"] if "AAPL" in raw.columns.get_level_values(0) else raw.xs("AAPL", axis=1, level=1)
-            st.write("**[raw에서 추출] AAPL 마지막 5행:**")
-            st.dataframe(aapl_raw.tail())
-            st.write(f"**[raw에서 추출] Close NaN 개수:** {aapl_raw['Close'].isna().sum()}")
-            st.write(f"**[raw에서 추출] 전체 행 수:** {len(aapl_raw)}")
-        # ===== DEEP DEBUG 끝 =====
-
-        # yfinance 버전 무관하게 티커별 DataFrame으로 분리
+        # yfinance 버전 무관 티커별 DataFrame 추출
+        # raw.columns.names = ['Ticker', 'Price'] 구조 기준 (yfinance 1.4.x)
         ticker_dfs = {}
         if isinstance(raw.columns, pd.MultiIndex):
-            lv0 = raw.columns.get_level_values(0).unique().tolist()
-            lv1 = raw.columns.get_level_values(1).unique().tolist()
-            ohlcv = {"Open", "High", "Low", "Close", "Volume", "Adj Close"}
-            # 최신 yfinance: level0=OHLCV, level1=ticker
-            if set(lv0) & ohlcv:
-                for ticker in TICKERS:
-                    if ticker in lv1:
-                        df_t = raw.xs(ticker, axis=1, level=1).copy()
-                        df_t = df_t.dropna(subset=["Close"])
-                        ticker_dfs[ticker] = df_t
-            # 구버전 yfinance: level0=ticker, level1=OHLCV
-            else:
-                for ticker in TICKERS:
-                    if ticker in lv0:
-                        df_t = raw[ticker].copy()
-                        df_t = df_t.dropna(subset=["Close"])
-                        ticker_dfs[ticker] = df_t
+            names = raw.columns.names  # e.g. ['Ticker', 'Price'] or ['Price', 'Ticker']
+            price_level = 1 if names[0] == 'Ticker' else 0
+            ticker_level = 0 if names[0] == 'Ticker' else 1
+            all_tickers_in_raw = raw.columns.get_level_values(ticker_level).unique().tolist()
+            for ticker in TICKERS:
+                if ticker in all_tickers_in_raw:
+                    df_t = raw.xs(ticker, axis=1, level=ticker_level).copy()
+                    # None/NaN 모두 제거: pd.to_numeric으로 강제 변환 후 dropna
+                    df_t["Close"] = pd.to_numeric(df_t["Close"], errors="coerce")
+                    df_t = df_t[df_t["Close"].notna()]
+                    ticker_dfs[ticker] = df_t
         else:
-            # 티커 1개일 때 (비정상 케이스 방어)
-            raw2 = raw.dropna(subset=["Close"])
+            raw2 = raw.copy()
+            raw2["Close"] = pd.to_numeric(raw2["Close"], errors="coerce")
+            raw2 = raw2[raw2["Close"].notna()]
             if TICKERS:
                 ticker_dfs[TICKERS[0]] = raw2
 
@@ -336,9 +311,8 @@ with left_col:
                 if data.empty or len(data) < 200:
                     continue
 
-                # 컬럼이 Series로 나오는 경우 squeeze
-                close_series = data["Close"].squeeze()
-                volume_series = data["Volume"].squeeze()
+                close_series = pd.to_numeric(data["Close"], errors="coerce")
+                volume_series = pd.to_numeric(data["Volume"], errors="coerce")
                 
                 ma20_series = close_series.rolling(20).mean()
                 ma100_series = close_series.rolling(100).mean()
