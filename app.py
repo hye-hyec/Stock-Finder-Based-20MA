@@ -579,3 +579,4 @@ with right_col:
         with right_col:
             st.info("좌측에서 조건을 설정한 후 검색 버튼을 눌러주세요.")
             
+            
