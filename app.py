@@ -390,6 +390,7 @@ with left_col:
             if selected_rows:
                 st.session_state.selected_ticker = df.iloc[selected_rows[0]]["종목"]
 
+
 # --- 2. 우측 영역 : 상세 지표, 대형 차트 및 기업 정보 추가 ---
 with right_col:
     if st.session_state.results_df is not None and not st.session_state.results_df.empty:
