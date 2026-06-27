@@ -176,7 +176,7 @@ def calculate_atr(data, period=14):
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
-@st.cache_data(ttl=0)
+@st.cache_data(ttl=300)
 def load_all_market_data(tickers):
     start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     data = yf.download(tickers, start=start_date, auto_adjust=True, group_by="ticker", progress=False)
@@ -265,14 +265,12 @@ with left_col:
         # 1. 미국 동부 시간 기준 로직 설정
         us_eastern = pytz.timezone('US/Eastern')
         now_us = datetime.now(us_eastern)
-        weekday = now_us.weekday() # 0:월, 1:화, 2:수, 3:목, 4:금, 5:토, 6:일
-        hour = now_us.hour
-        minute = now_us.minute
 
-        # 2. 미국 정규장 진행 중인지 정확히 판별 (월~금, 09:30 ~ 16:00)
-        is_market_open_now = (weekday < 5) and ((hour == 9 and minute >= 30) or (10 <= hour < 16))
-        
-        # 3. 사용자님 완벽 논리 적용: 장중이면 어제 종가(-2), 그 외(장 시작전, 마감후, 주말)는 가장 최근 마감 종가(-1)
+        market_open  = now_us.replace(hour=9,  minute=30, second=0, microsecond=0)
+        market_close = now_us.replace(hour=16, minute=0,  second=0, microsecond=0)
+        weekday = now_us.weekday()
+
+        is_market_open_now = (weekday < 5) and (market_open <= now_us < market_close)
         idx = -2 if is_market_open_now else -1
         
         with st.spinner("데이터 수집 중..."):
