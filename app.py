@@ -2,6 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
+import pytz
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="NASDAQ Scanner Pro", page_icon="📈", layout="wide")
@@ -192,7 +193,6 @@ def calculate_atr(data, period=14):
 
 @st.cache_data(ttl=3600)
 def load_all_market_data(tickers):
-    # end 파라미터를 아예 없애야 가장 최근 거래일(어제 장 마감분)까지 들어옵니다.
     start_date = (datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d')
     data = yf.download(tickers, start=start_date, auto_adjust=True, group_by="ticker", progress=False)
     return data
@@ -201,21 +201,16 @@ def load_all_market_data(tickers):
 def get_next_earnings_date(ticker):
     try:
         t = yf.Ticker(ticker)
-        # 1. info에서 직접 가져오기 (가장 빠르고 정확한 경우가 많음)
         info = t.info
         if info:
-            # 여러 키값 중 존재하는 것을 우선 선택
             next_date = info.get("nextEarningsDate")
             if next_date:
-                # 타임스탬프인 경우 변환
                 if isinstance(next_date, (int, float)):
                     return datetime.fromtimestamp(next_date).strftime('%Y-%m-%d')
                 return str(next_date)
         
-        # 2. calendar 데이터 확인
         cal = t.calendar
         if cal is not None and not cal.empty:
-            # Series나 DataFrame 형태에서 날짜 추출
             val = cal.iloc[0]
             if isinstance(val, (pd.Timestamp, datetime)):
                 return val.strftime('%Y-%m-%d')
@@ -285,24 +280,32 @@ with left_col:
     if search_clicked:
         results = []
 
+        # 1. 미국 동부 시간 기준 로직 설정
+        us_eastern = pytz.timezone('US/Eastern')
+        now_us = datetime.now(us_eastern)
+        weekday = now_us.weekday() # 0:월, 4:금, 5:토, 6:일
+        hour = now_us.hour
+
+        # 2. 마감 여부 판별 (금,토,일은 마감 / 평일 16시 이후도 마감)
+        is_market_closed = (weekday >= 5) or (weekday == 4 and hour >= 16) or (weekday < 4 and hour >= 16)
         
-        with st.spinner("야후 파이낸스에서 데이터를 수집 중..."):
-            # threads=True를 추가하여 다운로드 속도 최적화
+        # 3. 인덱스 설정: 마감이면 오늘(마지막), 장중이면 어제(그 전날)
+        idx = -1 if is_market_closed else -2
+        
+        with st.spinner("데이터 수집 중..."):
+            # 🛠️ [수정] 200일 이동평균선 계산을 위해 데이터를 60일이 아닌 365일치로 충분히 가져옵니다.
             all_data = yf.download(TICKERS, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'), 
                                    auto_adjust=True, group_by="ticker", progress=False, threads=True)
         
-        has_multiindex = isinstance(all_data.columns, pd.MultiIndex)
-        available_tickers = all_data.columns.levels[0] if has_multiindex else all_data.columns
-        
+        available_tickers = all_data.columns.levels[0] if isinstance(all_data.columns, pd.MultiIndex) else all_data.columns
+
         for ticker in TICKERS:
             try:
-                if ticker in available_tickers:
-                    data = all_data[ticker].dropna(subset=["Close"]) if has_multiindex else all_data.dropna(subset=["Close"])
-                else:
-                    continue
+                if ticker not in available_tickers: continue
                 
-                if data.empty or len(data) < 200:
-                    continue
+                ticker_data = all_data[ticker] if isinstance(all_data.columns, pd.MultiIndex) else all_data
+                data = ticker_data.dropna(subset=["Close"])
+                if data.empty or len(data) < 200: continue
 
                 close_series = data["Close"]
                 volume_series = data["Volume"]
@@ -311,13 +314,7 @@ with left_col:
                 ma100_series = close_series.rolling(100).mean()
                 ma200_series = close_series.rolling(200).mean()
                 rsi_series = calculate_rsi(close_series)
-
-                today = pd.Timestamp.now().normalize()
-                last_date = data.index[-1].normalize()
-                is_market_closed = last_date < today
-
-                # 2. 판단 결과를 바탕으로 idx 설정
-                idx = -1 if is_market_closed else -2
+                atr_series = calculate_atr(data)
 
                 price = float(close_series.iloc[idx])
                 ma20 = float(ma20_series.iloc[idx])
@@ -325,10 +322,8 @@ with left_col:
                 ma200 = float(ma200_series.iloc[idx])
                 rsi = float(rsi_series.iloc[idx])
                 # [추가] ATR 및 이탈가 계산
-                atr_series = calculate_atr(data) # 데이터프레임 전체에 대해 계산
                 atr = float(atr_series.iloc[idx])
                 stop_price = ma20 - (atr * 1.5) # ATR 1.5배 이탈가 계산
-                # ed_date = "조회 필요"
 
                 if pd.isna(ma20) or pd.isna(rsi):
                     continue
@@ -348,16 +343,15 @@ with left_col:
                         is_match = False
                 
                 if volume_filter_active and is_match:
-
                     value_series = close_series * volume_series
                     
-                    # [수정] 마감 여부에 따라 슬라이싱 구간 동적 설정
+                    # 🛠️ [수정] 빈 데이터프레임을 반환하는 복잡한 수식 대신 슬라이싱 범위를 안정적으로 직접 지정합니다.
                     if is_market_closed:
-                        # 장이 끝남: 어제, 그제, 그그제(마지막 3일)
+                        # 장 마감: 마지막 거래일 포함 최근 3일평균 vs 20일평균
                         avg_value_3d = value_series.iloc[-3:].mean()
                         avg_value_20d = value_series.iloc[-20:].mean()
                     else:
-                        # 장중: 오늘 제외, 어제부터 3일
+                        # 장중: 미완성 당일 데이터(-1) 제외, 어제 기준 최근 3일평균 vs 20일평균
                         avg_value_3d = value_series.iloc[-4:-1].mean()
                         avg_value_20d = value_series.iloc[-21:-1].mean()
                     
@@ -381,7 +375,6 @@ with left_col:
                         "ATR 1.5배 이탈가": round(stop_price, 2),
                         "괴리율(%)": round(distance, 2),
                         "RSI": round(rsi, 2),
-                        #"실적발표일": ed_date
                     })
             except Exception:
                 pass
@@ -491,7 +484,7 @@ with right_col:
         fig.add_trace(go.Scatter(x=chart.index, y=chart["MA100"], name="100 MA", line=dict(color='#a371f7', width=1.5, dash='dot')))
         fig.add_trace(go.Scatter(x=chart.index, y=chart["MA200"], name="200 MA", line=dict(color='#ff9922', width=2, dash='dash')))
 
-        # 🛠专 요청사항 반영: legend(범례) 위치를 우측 하단(y=0.02, x=0.98, xanchor='right')으로 수정
+        # 🛠️ 요청사항 반영: legend(범례) 위치를 우측 하단(y=0.02, x=0.98, xanchor='right')으로 수정
         fig.update_layout(
             template="plotly_dark", paper_bgcolor='#0d1117', plot_bgcolor='#161b22', height=500, 
             xaxis_rangeslider_visible=False, title=f"{selected_ticker} 1-Year Technical Chart",
