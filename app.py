@@ -24,7 +24,7 @@ def fetch_stooq_recent(ticker, days=15):
             f"&d1={start.strftime('%Y%m%d')}&d2={end.strftime('%Y%m%d')}&i=d"
         )
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=8) as resp:
+        with urllib.request.urlopen(req, timeout=5) as resp:
             text = resp.read().decode('utf-8', errors='ignore')
         if not text or 'Date' not in text:
             return None
@@ -368,14 +368,29 @@ with left_col:
             return pd.isna(last_close)
 
         fill_count = 0
-        for ticker in TICKERS:
-            df_t = ticker_dfs.get(ticker)
-            if df_t is None:
-                continue
-            if needs_fill(df_t):
+        # 보충이 필요한 종목만 추림
+        need_list = [t for t in TICKERS if needs_fill(ticker_dfs.get(t))]
+
+        # ── Stooq 연결 사전 테스트 (AAPL 1개로 빠르게 확인) ──
+        stooq_works = False
+        if need_list:
+            test = fetch_stooq_recent("AAPL")
+            stooq_works = (test is not None) and (not test.empty)
+            if stooq_works:
+                st.info(f"✅ 보조 소스(Stooq) 연결됨 · 보완 대상 {len(need_list)}개 종목")
+            else:
+                st.warning("⚠️ 보조 소스(Stooq)에 연결할 수 없습니다. "
+                           "yfinance 데이터로만 진행하며, 기준일이 하루 이전일 수 있습니다.")
+
+        stooq_disabled = not stooq_works
+        if need_list and stooq_works:
+            prog = st.progress(0.0, text=f"최신 종가 보완 중... (0/{len(need_list)})")
+            for i, ticker in enumerate(need_list):
+                df_t = ticker_dfs.get(ticker)
+                if df_t is None:
+                    continue
                 stooq = fetch_stooq_recent(ticker)
                 if stooq is not None and not stooq.empty:
-                    # yfinance에 없는/NaN인 날짜를 Stooq 값으로 채움
                     for d, row in stooq.iterrows():
                         if d in df_t.index:
                             if pd.isna(df_t.at[d, "Close"]):
@@ -388,9 +403,17 @@ with left_col:
                                     df_t.at[d, c] = row[c]
                     df_t = df_t.sort_index()
                     fill_count += 1
-            # Close가 여전히 NaN인 행 제거
-            df_t = df_t[df_t["Close"].notna()].copy()
-            ticker_dfs[ticker] = df_t
+                    ticker_dfs[ticker] = df_t
+                prog.progress((i + 1) / len(need_list),
+                              text=f"최신 종가 보완 중... ({i+1}/{len(need_list)})")
+            prog.empty()
+
+        # Close가 여전히 NaN인 행 제거
+        for ticker in TICKERS:
+            df_t = ticker_dfs.get(ticker)
+            if df_t is None:
+                continue
+            ticker_dfs[ticker] = df_t[df_t["Close"].notna()].copy()
 
         for ticker in TICKERS:
             try:
