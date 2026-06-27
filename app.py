@@ -311,6 +311,46 @@ with left_col:
         today_us = pd.Timestamp(now_us.strftime('%Y-%m-%d'))
         after_close = (weekday < 5) and (now_us >= market_close)
 
+        # ===== 🔬 yfinance 수신 방식 진단 (AAPL 마지막 종가가 어느 방식에서 채워지나) =====
+        with st.expander("🔬 진단: yfinance 수신 방식 비교", expanded=True):
+            import io as _io
+            def _last_close(d):
+                try:
+                    if isinstance(d.columns, pd.MultiIndex):
+                        d = d.copy(); d.columns = d.columns.get_level_values(0)
+                    c = pd.to_numeric(d["Close"], errors="coerce").dropna()
+                    return f"{c.index[-1].strftime('%Y-%m-%d')} = {c.iloc[-1]:.2f}"
+                except Exception as e:
+                    return f"오류 {e}"
+
+            # 방식 A: download + start (현재 방식)
+            try:
+                a = yf.download("AAPL", start=(datetime.now()-timedelta(days=10)).strftime('%Y-%m-%d'),
+                                auto_adjust=True, progress=False)
+                st.write(f"**A) download(start=...):** {_last_close(a)}")
+            except Exception as e:
+                st.write(f"A) 오류: {e}")
+            # 방식 B: download + period
+            try:
+                b = yf.download("AAPL", period="10d", auto_adjust=True, progress=False)
+                st.write(f"**B) download(period='10d'):** {_last_close(b)}")
+            except Exception as e:
+                st.write(f"B) 오류: {e}")
+            # 방식 C: Ticker.history + period
+            try:
+                c = yf.Ticker("AAPL").history(period="10d", auto_adjust=True)
+                st.write(f"**C) Ticker.history(period='10d'):** {_last_close(c)}")
+            except Exception as e:
+                st.write(f"C) 오류: {e}")
+            # 방식 D: Ticker.history + start
+            try:
+                dd = yf.Ticker("AAPL").history(start=(datetime.now()-timedelta(days=10)).strftime('%Y-%m-%d'), auto_adjust=True)
+                st.write(f"**D) Ticker.history(start=...):** {_last_close(dd)}")
+            except Exception as e:
+                st.write(f"D) 오류: {e}")
+            st.caption(f"now_us = {now_us.strftime('%Y-%m-%d %H:%M %Z')}  ·  목표: 금요일 종가가 보이는 방식 찾기")
+        # ===== 진단 끝 =====
+
         with st.spinner("데이터 수집 중..."):
             raw = yf.download(
                 TICKERS,
