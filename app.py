@@ -5,6 +5,10 @@ import plotly.graph_objects as go
 import pytz
 from datetime import datetime, timedelta
 
+if st.sidebar.button("데이터 강제 갱신(Cache Clear)"):
+    st.cache_data.clear()
+    st.rerun()
+
 st.set_page_config(page_title="NASDAQ Scanner Pro", page_icon="📈", layout="wide")
 
 # --- 🖤 고급스러운 트레이딩 룸 느낌의 딥다크 CSS ---
