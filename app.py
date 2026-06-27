@@ -32,7 +32,6 @@ h1 {
     color: #ffffff !important;
     font-weight: 600 !important;
 }
-/* 🛠️ 요청사항 반영: 타이틀과 조건 필터 설정 사이 여백 확보 */
 .filter-box {
     margin-top: 25px !important;
     margin-bottom: 15px;
@@ -92,8 +91,6 @@ h2, h4 {
     color: #ffffff !important;
     font-weight: 600 !important;
 }
-
-/* 커스텀 카드 및 정보 박스 스타일 */
 .earnings-card, .info-card {
     background-color: #161b22;
     border: 1px solid #30363d;
@@ -138,27 +135,16 @@ NASDAQ100_TICKERS = [
 ]
 
 NEW_TICKERS = [
-    # 금융 (Financials)
     "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "SCHW", 
     "PNC", "USB", "TFC", "COF", "MET", "PRU", "AFL", "ALL", "CB",
-    
-    # 헬스케어 (Healthcare)
     "JNJ", "UNH", "LLY", "PFE", "MRK", "ABBV", "ABT", "DHR", "BMY", "CVS", 
     "CI", "HCA", "SYK", "BDX", "MDT", "ELV", "GILD", "HUM", "CNC", "ZTS",
-    
-    # 에너지 및 원자재 (Energy & Materials)
     "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "WMB",
     "LIN", "APD", "ECL", "DD", "FCX", "NEM", "SHW", "IFF", "CTVA", "PPG",
-    
-    # 필수소비재 (Consumer Staples)
     "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "CL", "KMB", "GIS",
     "ADM", "MDLZ", "STZ", "HSY", "KR", "SYY", "EL", "CAG", "TSN",
-    
-    # 산업재 (Industrials)
     "UPS", "FDX", "CAT", "DE", "GE", "HON", "BA", "MMM", "LMT", "RTX",
     "GD", "NOC", "GEHC", "ITW", "EMR", "CMI", "CSX", "UNP", "NSC", "JCI",
-    
-    # 경기소비재 및 유틸리티 (Consumer Discretionary & Utilities)
     "DIS", "NKE", "HD", "LOW", "MCD", "TGT", "TJX", "GM", "F", "BKNG",
     "MAR", "HLT", "EXC", "NEE", "DUK", "SO", "D", "AEP", "SRE", "PEG"
 ]
@@ -180,7 +166,6 @@ def calculate_rsi(close, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
-# [추가] ATR 계산 함수
 def calculate_atr(data, period=14):
     high = data['High']
     low = data['Low']
@@ -208,17 +193,14 @@ def get_next_earnings_date(ticker):
                 if isinstance(next_date, (int, float)):
                     return datetime.fromtimestamp(next_date).strftime('%Y-%m-%d')
                 return str(next_date)
-        
         cal = t.calendar
         if cal is not None and not cal.empty:
             val = cal.iloc[0]
             if isinstance(val, (pd.Timestamp, datetime)):
                 return val.strftime('%Y-%m-%d')
             return str(val)
-            
     except Exception:
         pass
-        
     return "확인 불가"
 
 @st.cache_data(ttl=86400)
@@ -283,17 +265,17 @@ with left_col:
         # 1. 미국 동부 시간 기준 로직 설정
         us_eastern = pytz.timezone('US/Eastern')
         now_us = datetime.now(us_eastern)
-        weekday = now_us.weekday() # 0:월, 4:금, 5:토, 6:일
+        weekday = now_us.weekday() # 0:월, 1:화, 2:수, 3:목, 4:금, 5:토, 6:일
         hour = now_us.hour
+        minute = now_us.minute
 
-        # 2. 마감 여부 판별 (금,토,일은 마감 / 평일 16시 이후도 마감)
-        is_market_closed = (weekday >= 5) or (weekday == 4 and hour >= 16) or (weekday < 4 and hour >= 16)
+        # 2. 미국 정규장 진행 중인지 정확히 판별 (월~금, 09:30 ~ 16:00)
+        is_market_open_now = (weekday < 5) and ((hour == 9 and minute >= 30) or (10 <= hour < 16))
         
-        # 3. 인덱스 설정: 마감이면 오늘(마지막), 장중이면 어제(그 전날)
-        idx = -1 if is_market_closed else -2
+        # 3. 사용자님 완벽 논리 적용: 장중이면 어제 종가(-2), 그 외(장 시작전, 마감후, 주말)는 가장 최근 마감 종가(-1)
+        idx = -2 if is_market_open_now else -1
         
         with st.spinner("데이터 수집 중..."):
-            # 🛠️ [수정] 200일 이동평균선 계산을 위해 데이터를 60일이 아닌 365일치로 충분히 가져옵니다.
             all_data = yf.download(TICKERS, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'), 
                                    auto_adjust=True, group_by="ticker", progress=False, threads=True)
         
@@ -321,9 +303,8 @@ with left_col:
                 ma100 = float(ma100_series.iloc[idx])
                 ma200 = float(ma200_series.iloc[idx])
                 rsi = float(rsi_series.iloc[idx])
-                # [추가] ATR 및 이탈가 계산
                 atr = float(atr_series.iloc[idx])
-                stop_price = ma20 - (atr * 1.5) # ATR 1.5배 이탈가 계산
+                stop_price = ma20 - (atr * 1.5)
 
                 if pd.isna(ma20) or pd.isna(rsi):
                     continue
@@ -345,13 +326,13 @@ with left_col:
                 if volume_filter_active and is_match:
                     value_series = close_series * volume_series
                     
-                    # 🛠️ [수정] 빈 데이터프레임을 반환하는 복잡한 수식 대신 슬라이싱 범위를 안정적으로 직접 지정합니다.
-                    if is_market_closed:
-                        # 장 마감: 마지막 거래일 포함 최근 3일평균 vs 20일평균
+                    # 4. 거래대금 계산도 장중 여부에 맞춰 완벽하게 분리
+                    if not is_market_open_now:
+                        # 장 시작 전, 마감 후, 주말: 마지막 거래일 포함 완결된 최근 3일/20일 평균
                         avg_value_3d = value_series.iloc[-3:].mean()
                         avg_value_20d = value_series.iloc[-20:].mean()
                     else:
-                        # 장중: 미완성 당일 데이터(-1) 제외, 어제 기준 최근 3일평균 vs 20일평균
+                        # 장중: 미완성 당일 데이터(-1)는 통계에서 제외하고, 어제 기준 3일/20일 평균
                         avg_value_3d = value_series.iloc[-4:-1].mean()
                         avg_value_20d = value_series.iloc[-21:-1].mean()
                     
@@ -484,7 +465,6 @@ with right_col:
         fig.add_trace(go.Scatter(x=chart.index, y=chart["MA100"], name="100 MA", line=dict(color='#a371f7', width=1.5, dash='dot')))
         fig.add_trace(go.Scatter(x=chart.index, y=chart["MA200"], name="200 MA", line=dict(color='#ff9922', width=2, dash='dash')))
 
-        # 🛠️ 요청사항 반영: legend(범례) 위치를 우측 하단(y=0.02, x=0.98, xanchor='right')으로 수정
         fig.update_layout(
             template="plotly_dark", paper_bgcolor='#0d1117', plot_bgcolor='#161b22', height=500, 
             xaxis_rangeslider_visible=False, title=f"{selected_ticker} 1-Year Technical Chart",
