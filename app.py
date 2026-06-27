@@ -129,8 +129,8 @@ NASDAQ100_TICKERS = [
     "BKNG", "ISRG", "VRTX", "GILD", "LRCX", "MU", "PANW", "KLAC", "MELI", "SNPS",
     "CDNS", "ADI", "MAR", "FTNT", "CRWD", "ORLY", "CSX", "PYPL", "MNST", "AEP",
     "ROP", "ODFL", "DXCM", "KDP", "CTAS", "NXPI", "PCAR", "MRVL", "FAST", "PAYX",
-    "TEAM", "DDOG", "ZS", "MDB", "NET", "SHOP", "SQ", "ROKU", "DOCU", "SNOW",
-    "PLTR", "ARM", "SMCI", "ANSS", "WDAY", "BIIB", "REGN", "EXC", "EA", "XEL",
+    "TEAM", "DDOG", "ZS", "MDB", "NET", "SHOP", "ROKU", "DOCU", "SNOW",
+    "PLTR", "ARM", "SMCI", "WDAY", "BIIB", "REGN", "EXC", "EA", "XEL",
     "IDXX", "FANG", "CPRT", "CHTR", "GEHC", "ON", "TTWO", "CSGP", "BKR", "WBD",
     "VRSK", "MCHP", "MRNA", "ALGN", "LULU", "KHC", "CTSH", "DLTR", "SBUX", "ADSK",
     "TTD", "RIVN", "OKTA", "HUBS", "PDD", "BIDU", "JD", "NTES", "CEG", "GFS"
@@ -138,20 +138,20 @@ NASDAQ100_TICKERS = [
 
 NEW_TICKERS = [
     # 금융 (Financials)
-    "JPM", "BRK.B", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "SCHW", 
-    "PNC", "USB", "TFC", "COF", "DFS", "MET", "PRU", "AFL", "ALL", "CB",
+    "JPM", "BAC", "WFC", "C", "GS", "MS", "BLK", "AXP", "SCHW", 
+    "PNC", "USB", "TFC", "COF", "MET", "PRU", "AFL", "ALL", "CB",
     
     # 헬스케어 (Healthcare)
     "JNJ", "UNH", "LLY", "PFE", "MRK", "ABBV", "ABT", "DHR", "BMY", "CVS", 
     "CI", "HCA", "SYK", "BDX", "MDT", "ELV", "GILD", "HUM", "CNC", "ZTS",
     
     # 에너지 및 원자재 (Energy & Materials)
-    "XOM", "CVX", "COP", "SLB", "EOG", "PXD", "MPC", "PSX", "VLO", "WMB",
+    "XOM", "CVX", "COP", "SLB", "EOG", "MPC", "PSX", "VLO", "WMB",
     "LIN", "APD", "ECL", "DD", "FCX", "NEM", "SHW", "IFF", "CTVA", "PPG",
     
     # 필수소비재 (Consumer Staples)
     "PG", "KO", "PEP", "COST", "WMT", "PM", "MO", "CL", "KMB", "GIS",
-    "ADM", "MDLZ", "STZ", "HSY", "KR", "SYY", "WBA", "EL", "CAG", "TSN",
+    "ADM", "MDLZ", "STZ", "HSY", "KR", "SYY", "EL", "CAG", "TSN",
     
     # 산업재 (Industrials)
     "UPS", "FDX", "CAT", "DE", "GE", "HON", "BA", "MMM", "LMT", "RTX",
@@ -179,6 +179,17 @@ def calculate_rsi(close, period=14):
     rs = avg_gain / avg_loss
     return 100 - (100 / (1 + rs))
 
+# [추가] ATR 계산 함수
+def calculate_atr(data, period=14):
+    high = data['High']
+    low = data['Low']
+    close = data['Close'].shift()
+    tr1 = high - low
+    tr2 = abs(high - close)
+    tr3 = abs(low - close)
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
+
 @st.cache_data(ttl=3600)
 def load_all_market_data(tickers):
     # end 파라미터를 아예 없애야 가장 최근 거래일(어제 장 마감분)까지 들어옵니다.
@@ -190,52 +201,30 @@ def load_all_market_data(tickers):
 def get_next_earnings_date(ticker):
     try:
         t = yf.Ticker(ticker)
-
-        # 1순위 calendar
-        try:
-            cal = t.calendar
-            if cal is not None:
-                if hasattr(cal, "values"):
-                    for v in cal.values.flatten():
-                        if hasattr(v, "strftime"):
-                            return v.strftime("%Y-%m-%d")
-            if isinstance(cal, dict):
-                for v in cal.values():
-                    if hasattr(v, "strftime"):
-                        return v.strftime("%Y-%m-%d")
-            if isinstance(cal, pd.DataFrame) and not cal.empty:
-                for v in cal.to_numpy().flatten():
-                    if hasattr(v, "strftime"):
-                        return v.strftime("%Y-%m-%d")
-        except Exception:
-            pass
-
-        # 2순위 earnings_dates
-        try:
-            ed = t.earnings_dates
-            if ed is not None and len(ed) > 0:
-                idx = list(ed.index)
-                future = [d for d in idx if pd.Timestamp(d) >= pd.Timestamp.now() - pd.Timedelta(days=1)]
-                if future:
-                    return min(future).strftime("%Y-%m-%d")
-        except Exception:
-            pass
-
-        # 3순위 info
-        try:
-            info = t.info
-            for key in ["earningsTimestamp","earningsTimestampStart","nextEarningsDate"]:
-                val = info.get(key)
-                if val:
-                    if isinstance(val,(int,float)):
-                        return datetime.fromtimestamp(val).strftime('%Y-%m-%d')
-        except Exception:
-            pass
-
+        # 1. info에서 직접 가져오기 (가장 빠르고 정확한 경우가 많음)
+        info = t.info
+        if info:
+            # 여러 키값 중 존재하는 것을 우선 선택
+            next_date = info.get("nextEarningsDate")
+            if next_date:
+                # 타임스탬프인 경우 변환
+                if isinstance(next_date, (int, float)):
+                    return datetime.fromtimestamp(next_date).strftime('%Y-%m-%d')
+                return str(next_date)
+        
+        # 2. calendar 데이터 확인
+        cal = t.calendar
+        if cal is not None and not cal.empty:
+            # Series나 DataFrame 형태에서 날짜 추출
+            val = cal.iloc[0]
+            if isinstance(val, (pd.Timestamp, datetime)):
+                return val.strftime('%Y-%m-%d')
+            return str(val)
+            
     except Exception:
         pass
-    return "N/A"
-    return "N/A"
+        
+    return "확인 불가"
 
 @st.cache_data(ttl=86400)
 def get_company_info(ticker):
@@ -295,9 +284,12 @@ with left_col:
 
     if search_clicked:
         results = []
+
         
-        with st.spinner("야후 파이낸스에서 전 종목 데이터를 초고속 수집 중..."):
-            all_data = load_all_market_data(TICKERS)
+        with st.spinner("야후 파이낸스에서 데이터를 수집 중..."):
+            # threads=True를 추가하여 다운로드 속도 최적화
+            all_data = yf.download(TICKERS, start=(datetime.now() - timedelta(days=365)).strftime('%Y-%m-%d'), 
+                                   auto_adjust=True, group_by="ticker", progress=False, threads=True)
         
         has_multiindex = isinstance(all_data.columns, pd.MultiIndex)
         available_tickers = all_data.columns.levels[0] if has_multiindex else all_data.columns
@@ -332,6 +324,11 @@ with left_col:
                 ma100 = float(ma100_series.iloc[idx])
                 ma200 = float(ma200_series.iloc[idx])
                 rsi = float(rsi_series.iloc[idx])
+                # [추가] ATR 및 이탈가 계산
+                atr_series = calculate_atr(data) # 데이터프레임 전체에 대해 계산
+                atr = float(atr_series.iloc[idx])
+                stop_price = ma20 - (atr * 1.5) # ATR 1.5배 이탈가 계산
+                # ed_date = "조회 필요"
 
                 if pd.isna(ma20) or pd.isna(rsi):
                     continue
@@ -381,9 +378,10 @@ with left_col:
                         "종목": ticker,
                         "현재가": round(price, 2),
                         "20일선": round(ma20, 2),
+                        "ATR 1.5배 이탈가": round(stop_price, 2),
                         "괴리율(%)": round(distance, 2),
                         "RSI": round(rsi, 2),
-                        "실적발표일": "조회중..."
+                        #"실적발표일": ed_date
                     })
             except Exception:
                 pass
