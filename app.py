@@ -194,25 +194,57 @@ def load_all_market_data(tickers, cache_key):
     )
     return data
 
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=3600)
 def get_next_earnings_date(ticker):
+    """
+    다음 실적 발표일을 'YYYY-MM-DD'로 반환. 실패 시 '확인 불가'.
+    최신 yfinance에서 calendar는 dict, earnings_dates는 DataFrame이다.
+    """
+    today = pd.Timestamp(datetime.now().date())
+
+    # 방법 1: t.calendar (dict) — 'Earnings Date' 키에 date 리스트
     try:
         t = yf.Ticker(ticker)
-        info = t.info
-        if info:
-            next_date = info.get("nextEarningsDate")
-            if next_date:
-                if isinstance(next_date, (int, float)):
-                    return datetime.fromtimestamp(next_date).strftime('%Y-%m-%d')
-                return str(next_date)
         cal = t.calendar
-        if cal is not None and not cal.empty:
-            val = cal.iloc[0]
-            if isinstance(val, (pd.Timestamp, datetime)):
-                return val.strftime('%Y-%m-%d')
-            return str(val)
+        if isinstance(cal, dict):
+            ed = cal.get("Earnings Date")
+            if ed:
+                # 리스트이거나 단일 값일 수 있음
+                dates = ed if isinstance(ed, (list, tuple)) else [ed]
+                parsed = []
+                for d in dates:
+                    try:
+                        parsed.append(pd.Timestamp(d))
+                    except Exception:
+                        pass
+                # 오늘 이후 가장 가까운 날짜 우선, 없으면 가장 최근 값
+                future = sorted([d for d in parsed if d >= today])
+                if future:
+                    return future[0].strftime('%Y-%m-%d')
+                if parsed:
+                    return sorted(parsed)[-1].strftime('%Y-%m-%d')
+        elif isinstance(cal, pd.DataFrame) and not cal.empty:
+            # 구버전 호환: DataFrame 형태
+            try:
+                val = cal.loc["Earnings Date"].iloc[0]
+                return pd.Timestamp(val).strftime('%Y-%m-%d')
+            except Exception:
+                pass
     except Exception:
         pass
+
+    # 방법 2: t.earnings_dates (DataFrame) — 인덱스가 발표일
+    try:
+        edf = yf.Ticker(ticker).earnings_dates
+        if isinstance(edf, pd.DataFrame) and not edf.empty:
+            idx = pd.to_datetime(edf.index).tz_localize(None)
+            future = sorted([d for d in idx if d >= today])
+            if future:
+                return future[0].strftime('%Y-%m-%d')
+            return sorted(idx)[-1].strftime('%Y-%m-%d')
+    except Exception:
+        pass
+
     return "확인 불가"
 
 @st.cache_data(ttl=86400)
@@ -507,13 +539,22 @@ with right_col:
         bg_color = "#161b22"
         border_color = "#1f6feb"
         text_color = "#58a6ff"
-        
-        if ed_str != "N/A":
+        ed_display = ed_str  # 화면에 표시할 문자열
+
+        if ed_str not in ("N/A", "확인 불가"):
             try:
                 today = datetime.now()
                 ed_date = datetime.strptime(ed_str, "%Y-%m-%d")
                 days_left = (ed_date - today).days
-                
+
+                # D-day 라벨 추가
+                if days_left == 0:
+                    ed_display = f"{ed_str} (오늘)"
+                elif days_left > 0:
+                    ed_display = f"{ed_str} (D-{days_left})"
+                else:
+                    ed_display = f"{ed_str} (발표완료)"
+
                 if 0 <= days_left <= 7:
                     bg_color = "#2b161a"
                     border_color = "#da3637"
@@ -529,7 +570,7 @@ with right_col:
             st.markdown(f"""
                 <div class="earnings-card" style="background-color: {bg_color}; border: 1px solid {border_color};">
                     <div class="earnings-label" style="color: #ffffff;">실적 발표일</div>
-                    <div class="earnings-value" style="color: {text_color};">{ed_str}</div>
+                    <div class="earnings-value" style="color: {text_color};">{ed_display}</div>
                 </div>
             """, unsafe_allow_html=True)
         
