@@ -257,8 +257,12 @@ def get_company_info(ticker):
             market_cap_str = f"${market_cap / 1e9:,.1f} B"
         else:
             market_cap_str = "N/A"
-            
+
+        # 기업명: longName 우선, 없으면 shortName, 둘 다 없으면 티커
+        name = info.get("longName") or info.get("shortName") or ticker
+
         return {
+            "name": name,
             "sector": info.get("sector", "N/A"),
             "industry": info.get("industry", "N/A"),
             "summary": info.get("longBusinessSummary", "기업 개요 정보가 없습니다."),
@@ -268,6 +272,7 @@ def get_company_info(ticker):
         }
     except Exception:
         return {
+            "name": ticker,
             "sector": "N/A", "industry": "N/A", "summary": "정보를 불러오지 못했습니다.",
             "market_cap": "N/A", "per": "N/A", "pbr": "N/A"
         }
@@ -292,7 +297,11 @@ with left_col:
     
     volume_filter_active = st.checkbox("최근 3일 거래대금 스파이크 필터", value=True)
     volume_threshold = st.slider("20일 평균 대비 3일 평균 거래대금 비율 (%)", 100, 300, 120)
-    
+
+    slope_filter_active = st.checkbox("20일선 기울기 우상향 (최근 5거래일 기준)", value=True)
+    slope_threshold = st.slider("최소 기울기 (%)", -5.0, 5.0, 0.0, 0.1,
+                                help="N=5거래일 기준 20일선 변화율. 0%면 우상향만 통과.")
+
     chk_col1, chk_col2 = st.columns(2)
     with chk_col1:
         trend_filter_100 = st.checkbox("중기 상승 (현재가 > 100일선)", value=True)
@@ -410,7 +419,22 @@ with left_col:
 
                 distance = (price - ma20) / ma20 * 100
 
+                # 20일선 기울기 (최근 5거래일 변화율, %)
+                # ma20[-1] vs ma20[-6] 비교 — 5거래일 간격
+                try:
+                    ma20_past = float(ma20_series.iloc[-6])
+                    if not pd.isna(ma20_past) and ma20_past != 0:
+                        slope_pct = (ma20 - ma20_past) / ma20_past * 100
+                    else:
+                        slope_pct = float('nan')
+                except (IndexError, ValueError):
+                    slope_pct = float('nan')
+
                 is_match = (price > ma20) and (rsi_min <= rsi <= rsi_max)
+
+                if slope_filter_active and is_match:
+                    if pd.isna(slope_pct) or slope_pct < slope_threshold:
+                        is_match = False
 
                 if exclude_drop_active and is_match:
                     recent_close = close_series.iloc[-30:]
@@ -445,6 +469,7 @@ with left_col:
                         "종목": ticker,
                         "현재가": round(price, 2),
                         "20일선": round(ma20, 2),
+                        "20일선 기울기(%)": round(slope_pct, 2) if not pd.isna(slope_pct) else None,
                         "ATR 1.5배 이탈가": round(stop_price, 2),
                         "괴리율(%)": round(distance, 2),
                         "RSI": round(rsi, 2),
@@ -527,6 +552,17 @@ with right_col:
             selected_ticker = row["종목"]
 
         st.markdown(f"### 📊 분석 타겟: <span style='color:#58a6ff; font-size:28px;'>{selected_ticker}</span>", unsafe_allow_html=True)
+        # 기업명 (티커 옆에 보조 표시)
+        try:
+            _name = get_company_info(selected_ticker).get("name", selected_ticker)
+            if _name and _name != selected_ticker:
+                st.markdown(
+                    f"<div style='color:#8b949e; font-size:15px; margin-top:-8px; margin-bottom:8px;'>"
+                    f"🏢 {_name}</div>",
+                    unsafe_allow_html=True
+                )
+        except Exception:
+            pass
         st.info("💡 왼쪽 테이블의 행을 클릭하면 실시간으로 우측 종목 정보와 차트가 동기화됩니다.")
 
         c1, c2, c3, c4, c5 = st.columns(5)
